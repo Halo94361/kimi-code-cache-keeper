@@ -12,7 +12,7 @@
 - 保活消息只能进入临时 fork，禁止在主会话中发送心跳。
 - 不修改 Kimi CLI 源码，不引入模型代理，不修改 provider `base_url`。
 - 不使用 `CronCreate`、`WaitFor` 或主会话定时回复。
-- 通过 MCP 提供 `on` / `off` / `status` / `now` / `stop` 薄封装，供 LLM 调用同一控制器接口；控制 token 不得暴露给模型。`UserPromptSubmit` 只注入当前 `sessionId` 和 `cwd`，不贡献 system prompt。
+- 通过 MCP 提供 `on` / `off` / `status` / `now` / `stop` 薄封装，供 LLM 调用同一控制器接口；slash commands 直接指示模型调用对应工具，控制 token 不得暴露给模型。`UserPromptSubmit` 只注入当前 `sessionId` 和 `cwd`，不贡献 system prompt。
 - 控制器是独立的 Node.js 进程，每个 `KIMI_CODE_HOME` 最多一个实例，不依赖 Web 会话常驻内存。
 - 插件 commands 和 hooks 保持薄入口，会话状态机、ACP 通信和安全策略放在可测试的核心模块中。
 

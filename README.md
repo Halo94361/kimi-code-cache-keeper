@@ -30,7 +30,7 @@ Kimi Code 的 prompt-cache 保活插件：主会话空闲时，通过独立临�
 在 Kimi Code 中执行：
 
 ```text
-/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.1.0/cache-keeper-0.1.0.zip
+/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.1.1/cache-keeper-0.1.1.zip
 /plugins reload
 ```
 
@@ -63,7 +63,7 @@ npm run build
 /cache-keeper:now      在当前命令回合结束后立即保活一次
 ```
 
-也可以直接对 LLM 说“开启当前会话的缓存保活”“查询保活状态”或“停止全部保活”。MCP 提供 `on`、`off`、`status`、`now`、`stop` 五个工具；`UserPromptSubmit` hook 只向模型提供当前 `sessionId` 和 `cwd`，不会暴露控制 token。
+以上 slash commands 会直接指示 LLM 调用对应的 MCP 工具并报告同步返回结果。也可以直接对 LLM 说“开启当前会话的缓存保活”“查询保活状态”或“停止全部保活”。MCP 提供 `on`、`off`、`status`、`now`、`stop` 五个工具；`UserPromptSubmit` hook 只向模型提供当前 `sessionId` 和 `cwd`，不会暴露控制 token。
 
 ## 开发与验证
 

@@ -5,7 +5,6 @@ await build({
     "src/cli.ts",
     "src/controller.ts",
     "src/mcp.ts",
-    "src/hooks/command.ts",
     "src/hooks/activity.ts",
     "src/hooks/session-context.ts",
   ],
