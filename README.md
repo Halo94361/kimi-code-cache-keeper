@@ -30,7 +30,7 @@ Kimi Code 的 prompt-cache 保活插件：主会话空闲时，通过独立临�
 在 Kimi Code 中执行：
 
 ```text
-/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.1.0/cache-keeper-v0.1.0.zip
+/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.1.0/cache-keeper-0.1.0.zip
 /plugins reload
 ```
 
