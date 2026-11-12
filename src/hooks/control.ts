@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 interface Discovery {
@@ -33,11 +35,22 @@ async function reachable(discovery: Discovery): Promise<boolean> {
   }
 }
 
+/**
+ * 控制器脚本定位：打包后 mcp.js 在 dist/ 根、hooks 在 dist/hooks/，
+ * 固定按 ../ 上跳一级在 mcp.js 里会解析到插件根目录导致拉起失败；
+ * 按文件存在性在两种布局中选择。
+ */
+export function resolveControllerScript(metaUrl: string): string {
+  const dir = dirname(fileURLToPath(metaUrl));
+  const candidates = [join(dir, "controller.js"), join(dir, "..", "controller.js")];
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[1]!;
+}
+
 async function ensureController(home: string): Promise<Discovery> {
   let discovery = await readDiscovery(home);
   if (discovery && await reachable(discovery)) return discovery;
 
-  const controllerPath = fileURLToPath(new URL("../controller.js", import.meta.url));
+  const controllerPath = resolveControllerScript(import.meta.url);
   spawn(process.execPath, [controllerPath, "--home", home], {
     detached: true,
     stdio: "ignore",
