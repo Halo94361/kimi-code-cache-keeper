@@ -6,10 +6,12 @@ Kimi Code 的 prompt-cache 保活插件：主会话空闲时，通过独立临�
 
 - 主会话不出现保活 prompt 或回复。
 - 默认空闲 20 分钟后保活，真实回合自动取消并重新计时。
+- 控制器重启后沿用原定的下次探测时间；若已过点则立即补一次，不重新等满 20 分钟。
 - 最大连续空闲保活 4 小时，异常时暂停，不无限消耗配额。
 - 支持单会话开关、立即保活、状态查询和全部停止。
 - 同时提供手动 slash commands 和 LLM 可调用的 MCP 工具。
 - ACP driver 采用所有权白名单，只能删除本次创建的 fork，生产路径不能删除原始 session。
+- 保活 fork 登记在 `<KIMI_CODE_HOME>/cache-keeper/fork-map.json`，供本机请求代理把 `x-opencode-session` 映射回父会话，避免 OpenCode Go 把临时 fork 当作新会话、缓存全未命中。
 
 ## 双模式工作方式
 

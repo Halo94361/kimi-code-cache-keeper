@@ -10,6 +10,8 @@ export interface KeeperSession {
   nextProbeAt: number | null;
   lastProbeAt: number | null;
   lastRealActivityAt: number;
+  /** 最后一轮对话结束时间；控制器重启后据此恢复空闲计时。旧状态文件可能缺失。 */
+  lastTurnEndAt?: number | null;
   hitRatio: number | null;
   error: string | null;
 }
@@ -78,6 +80,7 @@ export class SessionRegistry {
         nextProbeAt: null,
         lastProbeAt: null,
         lastRealActivityAt: this.now(),
+        lastTurnEndAt: null,
         hitRatio: null,
         error: null,
         probing: false,
@@ -129,6 +132,7 @@ export class SessionRegistry {
     if (!session?.enabled) return;
     session.busy = false;
     session.error = null;
+    session.lastTurnEndAt = this.now();
     if (session.pendingNow && !session.probing) {
       session.pendingNow = false;
       void this.runProbe(session);
@@ -154,6 +158,7 @@ export class SessionRegistry {
   }
 
   restore(sessions: KeeperSession[]): void {
+    const due: MutableSession[] = [];
     for (const session of sessions) {
       this.sessions.set(session.sessionId, {
         ...session,
@@ -162,22 +167,43 @@ export class SessionRegistry {
         pendingNow: false,
         timer: null,
       });
-      if (session.enabled) {
-        const restored = this.sessions.get(session.sessionId)!;
-        restored.state = "waiting";
-        restored.nextProbeAt = null;
+      if (!session.enabled) continue;
+      const restored = this.sessions.get(session.sessionId)!;
+      restored.state = "waiting";
+      const deadline = this.restoreDeadline(restored, session.busy);
+      if (deadline === null) {
         this.schedule(restored);
+      } else if (deadline <= this.now()) {
+        due.push(restored);
+      } else {
+        this.schedule(restored, deadline);
       }
     }
+    for (const session of due) void this.runProbe(session);
     this.onChange();
   }
 
-  private schedule(session: MutableSession): void {
+  /**
+   * 恢复后的下次探测时间。优先沿用持久化的 nextProbeAt；该字段在探测或回合开始
+   * 时会被清空，此时若控制器退出前已结束回合，按最后一轮结束时间加间隔推算；
+   * 崩溃时正在回合中则无法确定空闲起点，保守地从恢复时刻重新计时。
+   */
+  private restoreDeadline(session: MutableSession, wasBusy: boolean): number | null {
+    if (typeof session.nextProbeAt === "number" && Number.isFinite(session.nextProbeAt)) {
+      return session.nextProbeAt;
+    }
+    if (!wasBusy && typeof session.lastTurnEndAt === "number" && Number.isFinite(session.lastTurnEndAt)) {
+      return session.lastTurnEndAt + this.intervalMs;
+    }
+    return null;
+  }
+
+  private schedule(session: MutableSession, deadline = this.now() + this.intervalMs): void {
     this.clear(session);
     if (!session.enabled || session.busy || session.probing) return;
-    session.nextProbeAt = this.now() + this.intervalMs;
+    session.nextProbeAt = deadline;
     session.state = "waiting";
-    session.timer = this.setTimer(() => this.runProbe(session), this.intervalMs);
+    session.timer = this.setTimer(() => this.runProbe(session), Math.max(0, deadline - this.now()));
     session.timer.unref();
   }
 

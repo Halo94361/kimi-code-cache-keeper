@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { withKimiAcp } from "./acp-client.js";
+import { ForkMap } from "./fork-map.js";
 import { runKeepaliveOnce } from "./keepalive.js";
 import { SessionRegistry, type KeeperSession, type ProbeResult } from "./session-registry.js";
 import { WebClient } from "./web-client.js";
@@ -62,6 +63,9 @@ export async function startController(options: ControllerOptions): Promise<{ por
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   const statePath = join(dataDir, "state.json");
   const discoveryPath = join(dataDir, "controller.json");
+  const forkMap = new ForkMap(home);
+  // 旧控制器留下的 fork 已不存在，启动时清空残留映射
+  await forkMap.clear();
   const discovered = options.probe === undefined && !options.web
     ? await discoverWebRuntime(home).catch(() => null)
     : null;
@@ -76,6 +80,7 @@ export async function startController(options: ControllerOptions): Promise<{ por
         const report = await runWebKeepaliveOnce(client, {
           parentSessionId: session.sessionId,
           diagnosticsHome: home,
+          forkMap,
         });
         if (report.status !== "ok") throw new Error(report.error ?? "保活失败");
         return { hitRatio: report.diagnostics?.usage.cacheHitRatio ?? null };
@@ -84,6 +89,7 @@ export async function startController(options: ControllerOptions): Promise<{ por
         parentSessionId: session.sessionId,
         cwd: session.cwd,
         diagnosticsHome: home,
+        forkMap,
       }));
       if (report.status !== "ok") throw new Error(report.error ?? "保活失败");
       return { hitRatio: report.diagnostics?.usage.cacheHitRatio ?? null };

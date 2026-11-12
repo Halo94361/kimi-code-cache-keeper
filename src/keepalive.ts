@@ -1,4 +1,5 @@
 import { readSessionDiagnostics, type SessionDiagnostics } from "./diagnostics.js";
+import type { ForkMap } from "./fork-map.js";
 import type { ProbeDriver, PromptResult } from "./probe.js";
 import { assertSessionLifecycleCapabilities, errorMessage } from "./safety.js";
 
@@ -6,6 +7,7 @@ export interface KeepaliveOptions {
   parentSessionId: string;
   cwd: string;
   diagnosticsHome?: string;
+  forkMap?: ForkMap;
 }
 
 export interface KeepaliveReport {
@@ -43,6 +45,7 @@ export async function runKeepaliveOnce(
 
     const fork = await driver.forkSession(options.parentSessionId, options.cwd);
     report.forkSessionId = fork.sessionId;
+    await options.forkMap?.record(fork.sessionId, options.parentSessionId);
     const resumedFork = await driver.resumeSession(fork.sessionId, options.cwd);
     await driver.setManualMode(fork.sessionId, resumedFork.modes ?? fork.modes);
     report.forkPrompt = await driver.prompt(fork.sessionId, KEEPALIVE_PROMPT);
@@ -75,6 +78,7 @@ export async function runKeepaliveOnce(
       try {
         await driver.deleteSession(report.forkSessionId);
         report.deletedSessionIds.push(report.forkSessionId);
+        await options.forkMap?.forget(report.forkSessionId);
       } catch (error) {
         report.deletedSessionIds = [];
         report.error = `清理保活 fork 失败：${errorMessage(error)}`;

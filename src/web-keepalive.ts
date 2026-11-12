@@ -1,4 +1,5 @@
 import { readSessionDiagnostics, type SessionDiagnostics } from "./diagnostics.js";
+import type { ForkMap } from "./fork-map.js";
 import type { PromptResult } from "./probe.js";
 import { errorMessage } from "./safety.js";
 import type { WebClient } from "./web-client.js";
@@ -6,6 +7,7 @@ import type { WebClient } from "./web-client.js";
 export interface WebKeepaliveOptions {
   parentSessionId: string;
   diagnosticsHome: string;
+  forkMap?: ForkMap;
 }
 
 export interface WebKeepaliveReport {
@@ -35,6 +37,7 @@ export async function runWebKeepaliveOnce(
   };
   try {
     report.forkSessionId = await client.forkSession(options.parentSessionId, "Cache Keeper");
+    await options.forkMap?.record(report.forkSessionId, options.parentSessionId);
     report.forkPrompt = await client.prompt(report.forkSessionId, KEEPALIVE_PROMPT);
     if (report.forkPrompt.unsafeToolActivity) {
       throw new Error("保活 fork 请求了工具调用，已取消");
@@ -61,6 +64,7 @@ export async function runWebKeepaliveOnce(
       try {
         await client.deleteSession(report.forkSessionId);
         report.deletedSessionIds.push(report.forkSessionId);
+        await options.forkMap?.forget(report.forkSessionId);
       } catch (error) {
         report.error = `删除保活 fork 失败：${errorMessage(error)}`;
       }
