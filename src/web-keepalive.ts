@@ -8,6 +8,8 @@ export interface WebKeepaliveOptions {
   parentSessionId: string;
   diagnosticsHome: string;
   forkMap?: ForkMap;
+  /** 真实回合开始、off/stop 时取消在飞保活。 */
+  signal?: AbortSignal;
 }
 
 export interface WebKeepaliveReport {
@@ -36,9 +38,11 @@ export async function runWebKeepaliveOnce(
     error: null,
   };
   try {
+    options.signal?.throwIfAborted();
     report.forkSessionId = await client.forkSession(options.parentSessionId, "Cache Keeper");
     await options.forkMap?.record(report.forkSessionId, options.parentSessionId);
-    report.forkPrompt = await client.prompt(report.forkSessionId, KEEPALIVE_PROMPT);
+    options.signal?.throwIfAborted();
+    report.forkPrompt = await client.prompt(report.forkSessionId, KEEPALIVE_PROMPT, options.signal);
     if (report.forkPrompt.unsafeToolActivity) {
       throw new Error("保活 fork 请求了工具调用，已取消");
     }

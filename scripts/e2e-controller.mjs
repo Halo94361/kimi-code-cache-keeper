@@ -95,6 +95,7 @@ try {
   controller = spawn(process.execPath, ["dist/controller.js", "--home", home], {
     env: {
       ...process.env,
+      CACHE_KEEPER_INTERVAL_MS: "1000",
       ...(process.env.CACHE_KEEPER_E2E_USE_ENV_WEB === "1"
         ? { KIMI_WEB_URL: baseUrl, KIMI_WEB_TOKEN: token }
         : {}),
@@ -125,7 +126,6 @@ try {
   await turn;
 
   await control("POST", `/v1/sessions/${sessionId}/on`, { cwd: workspace, title: "控制器验收" });
-  await control("POST", `/v1/sessions/${sessionId}/now`, {});
 
   let status;
   for (let attempt = 0; attempt < 120; attempt += 1) {

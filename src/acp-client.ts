@@ -94,6 +94,10 @@ class KimiAcpDriver implements ProbeDriver {
     }
   }
 
+  async cancelPrompt(sessionId: string): Promise<void> {
+    if (this.activeSessionId === sessionId) this.cancelActiveTurn();
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     this.ownership.assertCanDelete(sessionId, this.allowCreatedParentCleanup);
     await this.ctx.request(acp.methods.agent.session.delete, { sessionId }, requestOptions());

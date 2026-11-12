@@ -89,6 +89,36 @@ test("保活异常进入暂停，真实活动后可恢复", async () => {
   assert.equal(registry.snapshot()[0]?.state, "waiting");
 });
 
+test("真实回合开始会取消在飞探测", async () => {
+  let probeSignal: AbortSignal = new AbortController().signal;
+  let resolveProbe: (() => void) | undefined;
+  const registry = new SessionRegistry({
+    intervalMs: 1,
+    maxIdleMs: 1_000,
+    probe: async (_session, signal) => {
+      probeSignal = signal;
+      await new Promise<void>((resolve) => {
+        resolveProbe = resolve;
+      });
+      return { hitRatio: 0.9 };
+    },
+  });
+  registry.enable("a", "/workspace");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(probeSignal.aborted, false);
+
+  registry.turnStarted("a");
+  assert.equal(probeSignal.aborted, true);
+  resolveProbe?.();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  const session = registry.snapshot()[0];
+  assert.equal(session?.busy, true);
+  assert.equal(session?.state, "waiting");
+  assert.equal(session?.error, null);
+  registry.stop("a");
+});
+
 function stored(overrides: Partial<KeeperSession> = {}): KeeperSession {
   return {
     sessionId: "a",

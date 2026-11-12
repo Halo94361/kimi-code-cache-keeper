@@ -1,52 +1,30 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { controllerCommand, controllerStatus } from "./hooks/control.js";
+import { controllerCodeCommand, controllerCodeStatus } from "./hooks/control.js";
+
+const CODE_SCHEMA = {
+  type: "object",
+  properties: {
+    code: { type: "string", description: "本会话短码，由 cache-keeper 在会话首次提交时注入" },
+  },
+  required: ["code"],
+};
 
 const TOOLS = [
   {
     name: "on",
-    description: "开启指定 Kimi Code 会话的缓存保活",
-    inputSchema: {
-      type: "object",
-      properties: {
-        sessionId: { type: "string" },
-        cwd: { type: "string" },
-        title: { type: "string" },
-      },
-      required: ["sessionId", "cwd"],
-    },
+    description: "开启本会话的缓存保活",
+    inputSchema: CODE_SCHEMA,
   },
   {
     name: "off",
-    description: "停止指定会话的保活并取消后续计时",
-    inputSchema: {
-      type: "object",
-      properties: { sessionId: { type: "string" } },
-      required: ["sessionId"],
-    },
+    description: "停止本会话的缓存保活并取消后续计时",
+    inputSchema: CODE_SCHEMA,
   },
   {
     name: "status",
-    description: "查询全部保活会话的状态、倒计时和缓存命中率",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "now",
-    description: "立即对指定会话执行一次 fork 保活",
-    inputSchema: {
-      type: "object",
-      properties: {
-        sessionId: { type: "string" },
-        cwd: { type: "string" },
-        title: { type: "string" },
-      },
-      required: ["sessionId", "cwd"],
-    },
-  },
-  {
-    name: "stop",
-    description: "停止全部会话的缓存保活",
-    inputSchema: { type: "object", properties: {} },
+    description: "查询本会话的保活状态、倒计时和缓存命中率",
+    inputSchema: CODE_SCHEMA,
   },
 ];
 
@@ -78,7 +56,7 @@ export async function handleMcp(request: JsonRpcRequest, home: string): Promise<
     return result(id, {
       protocolVersion: "2024-11-05",
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "cache-keeper", version: "0.1.0" },
+      serverInfo: { name: "cache-keeper", version: "0.2.3" },
     });
   }
   if (method === "ping") return result(id, {});
@@ -89,22 +67,14 @@ export async function handleMcp(request: JsonRpcRequest, home: string): Promise<
   const name = params?.["name"];
   const args = params?.["arguments"] as Record<string, unknown> | undefined;
   if (typeof name !== "string" || !args) return error(id, -32602, "缺少工具名称或参数");
-  const sessionId = typeof args["sessionId"] === "string" ? args["sessionId"] : "";
-  const cwd = typeof args["cwd"] === "string" ? args["cwd"] : "";
-  const title = typeof args["title"] === "string" ? args["title"] : null;
+  const code = typeof args["code"] === "string" ? args["code"] : "";
+  if (code.trim().length === 0) return error(id, -32602, "缺少会话短码 code");
   try {
-    if (name === "status") return result(id, toolResult(await controllerStatus(home)));
-    if (name === "stop") {
-      const discovery = await import("./hooks/control.js").then((module) => module.controllerStopAll(home));
-      return result(id, toolResult(discovery));
-    }
-    if (!sessionId || ((name === "on" || name === "now") && !cwd)) {
-      return error(id, -32602, "该工具需要有效的 sessionId 和 cwd");
-    }
-    if (name !== "on" && name !== "off" && name !== "now") {
+    if (name === "status") return result(id, toolResult(await controllerCodeStatus(home, code)));
+    if (name !== "on" && name !== "off") {
       return error(id, -32602, `未知工具：${name}`);
     }
-    const value = await controllerCommand(home, name, sessionId, cwd, title);
+    const value = await controllerCodeCommand(home, name, code);
     return result(id, toolResult(value));
   } catch (cause) {
     return result(id, {

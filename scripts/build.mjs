@@ -6,7 +6,7 @@ await build({
     "src/controller.ts",
     "src/mcp.ts",
     "src/hooks/activity.ts",
-    "src/hooks/session-context.ts",
+    "src/hooks/session-code.ts",
   ],
   bundle: true,
   platform: "node",

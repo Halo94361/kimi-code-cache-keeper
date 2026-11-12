@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { controllerActivity } from "./control.js";
 
 let input = "";
@@ -8,10 +10,10 @@ const payload = JSON.parse(input) as {
   session_title?: string;
   cwd?: string;
 };
-const home = process.env.KIMI_CODE_HOME;
+const home = process.env.KIMI_CODE_HOME ?? join(homedir(), ".kimi-code");
 const sessionId = payload.session_id;
 const cwd = payload.cwd;
-if (!home || !sessionId || !cwd || !payload.hook_event_name) process.exit(0);
+if (!sessionId || !cwd || !payload.hook_event_name) process.exit(0);
 
 try {
   await controllerActivity(

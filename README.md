@@ -14,7 +14,8 @@ the request or the reply.
 - **No keep-alive prompt or reply in the main session**
 - Default: one probe 20 minutes after the last turn; stops after 4 hours idle
 - Controller restarts keep the planned probe time; overdue probes run immediately
-- Per-session on/off, probe now, status, stop all
+- Per-session 9-digit short code; on/off/status act only on the calling session
+- Global stop all remains on the controller API for the desktop shell
 - Slash commands and MCP tools
 - Fork ownership allowlist: only forks created by this plugin can be deleted
 - Writes `fork-map.json` so a local proxy can reuse the parent session's
@@ -43,11 +44,12 @@ From a local checkout: `npm ci && npm run build`, then
 | `/cache-keeper:on` | enable keep-alive for the current session |
 | `/cache-keeper:off` | disable it |
 | `/cache-keeper:status` | countdown, last hit ratio, state |
-| `/cache-keeper:now` | probe once after the current turn |
 
-MCP tools: `on`, `off`, `status`, `now`, `stop`. The `UserPromptSubmit` hook
-only injects the current `sessionId` and `cwd`; the control token never
-reaches the model.
+
+MCP tools: `on`, `off`, `status`. Every tool takes the session's 9-digit
+short code, injected once when the session becomes active. The code
+maps to exactly one session; there is no cwd/busy inference. The control
+token never reaches the model.
 
 ## Compatibility and limits
 
@@ -58,9 +60,14 @@ reaches the model.
 - The OpenCode Go `x-opencode-session` fix needs `opencode-session-proxy`
   shipped with `tauri_kimi` 0.7.7+. A plain CLI install gets the fork
   keep-alive only, not that header repair.
+- The controller reconciles the real session busy state through `kimi web`
+  every 30 seconds; a missed Stop hook still starts the idle timer.
 - Oversized or unparsable requests may fall back to a process-wide session ID.
 - State lives in `<KIMI_CODE_HOME>/cache-keeper/state.json`; it contains no
   message content, tokens or API keys.
+- Session short codes live in `<KIMI_CODE_HOME>/cache-keeper/sessions/`
+  (one file per session, 30-day TTL); they contain only the code, session ID,
+  cwd and timestamps.
 
 ## Development
 
@@ -90,7 +97,8 @@ MIT. Community project, not affiliated with Moonshot AI.
 - 主会话零污染，不产生保活消息或回复
 - 默认最后一轮结束 20 分钟后保活，连续空闲 4 小时后自动停止
 - 控制器重启沿用原定探测时间，已过点立即补一次
-- 单会话开关、立即保活、状态查询、全部停止
+- 会话首次提交时注入 9 位短码，MCP 工具只作用于该短码对应的会话
+- 全局停止保留在控制器接口，仅供桌面壳使用
 - 同时提供 slash commands 与 MCP 工具
 - fork 所有权白名单，只能删除本插件创建的临时会话
 - 写入 `fork-map.json`，供本机代理复用父会话的 OpenCode Go 缓存亲和
@@ -112,10 +120,11 @@ MIT. Community project, not affiliated with Moonshot AI.
 | `/cache-keeper:on` | 开启当前会话保活 |
 | `/cache-keeper:off` | 关闭 |
 | `/cache-keeper:status` | 查看倒计时、命中率与状态 |
-| `/cache-keeper:now` | 当前回合结束后立即探测一次 |
 
-MCP 提供 `on`、`off`、`status`、`now`、`stop` 五个工具。`UserPromptSubmit`
-hook 只向模型提供当前 `sessionId` 与 `cwd`，控制 token 不进入上下文。
+
+MCP 提供 `on`、`off`、`status` 三个工具，均接收本会话的 9 位短码。
+短码在会话激活后首次提交时注入一次，精确映射到单个会话；不再按
+`cwd`/忙碌状态推断，也不接受其他会话的 `sessionId`。控制 token 不进入上下文。
 
 ### 兼容性与限制
 
@@ -124,9 +133,12 @@ hook 只向模型提供当前 `sessionId` 与 `cwd`，控制 token 不进入上�
   `error` / `paused`，不会静默跳过
 - OpenCode Go 的 `x-opencode-session` 修复需要 `tauri_kimi` 0.7.7+ 附带的
   `opencode-session-proxy`；纯 CLI 安装只获得 fork 保活
+- 控制器每 30 秒通过 `kimi web` 的真实忙碌状态校正计时；漏掉 Stop hook 仍会开始空闲倒计时
 - 超过请求体上限或无法解析时退回进程级会话 ID
 - 状态保存在 `<KIMI_CODE_HOME>/cache-keeper/state.json`，不含消息正文、
   token 或 API key
+- 会话短码保存在 `<KIMI_CODE_HOME>/cache-keeper/sessions/`（每会话一个文件，
+  30 天 TTL），只含短码、session ID、cwd 和时间戳
 
 ### 开发
 

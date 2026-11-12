@@ -52,26 +52,6 @@ async function ensureController(home: string): Promise<Discovery> {
   throw new Error("无法启动缓存保活控制器");
 }
 
-export async function controllerCommand(
-  home: string,
-  action: "on" | "off" | "now",
-  sessionId: string,
-  cwd: string,
-  title: string | null,
-): Promise<unknown> {
-  const discovery = await ensureController(home);
-  const response = await fetch(`http://127.0.0.1:${discovery.port}/v1/sessions/${encodeURIComponent(sessionId)}/${action}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${discovery.controlToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ cwd, title }),
-    signal: AbortSignal.timeout(5_000),
-  });
-  return response.json();
-}
-
 export async function controllerActivity(
   home: string,
   event: string,
@@ -91,20 +71,28 @@ export async function controllerActivity(
   });
 }
 
-export async function controllerStatus(home: string): Promise<unknown> {
+export async function controllerCodeStatus(home: string, code: string): Promise<unknown> {
   const discovery = await ensureController(home);
-  const response = await fetch(`http://127.0.0.1:${discovery.port}/v1/status`, {
+  const response = await fetch(`http://127.0.0.1:${discovery.port}/v1/code/${encodeURIComponent(code)}`, {
     headers: { Authorization: `Bearer ${discovery.controlToken}` },
     signal: AbortSignal.timeout(5_000),
   });
   return response.json();
 }
 
-export async function controllerStopAll(home: string): Promise<unknown> {
+export async function controllerCodeCommand(
+  home: string,
+  action: "on" | "off",
+  code: string,
+): Promise<unknown> {
   const discovery = await ensureController(home);
-  const response = await fetch(`http://127.0.0.1:${discovery.port}/v1/stop`, {
+  const response = await fetch(`http://127.0.0.1:${discovery.port}/v1/code/${action}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${discovery.controlToken}` },
+    headers: {
+      Authorization: `Bearer ${discovery.controlToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ code }),
     signal: AbortSignal.timeout(5_000),
   });
   return response.json();

@@ -32,11 +32,47 @@ class Driver implements ProbeDriver {
   async prompt(): Promise<PromptResult> {
     return { stopReason: this.unsafe ? "cancelled" : "end_turn", usage: null, unsafeToolActivity: this.unsafe };
   }
+  async cancelPrompt(_sessionId: string): Promise<void> {}
   async deleteSession(sessionId: string): Promise<void> {
     if (sessionId === "parent-existing") this.parentDeleted = true;
     if (sessionId === "fork-created") this.forkDeleted = true;
   }
 }
+
+class SlowDriver extends Driver {
+  release: (() => void) | undefined;
+  cancelCalls: string[] = [];
+
+  async prompt(): Promise<PromptResult> {
+    await new Promise<void>((resolve) => {
+      this.release = resolve;
+    });
+    return { stopReason: "cancelled", usage: null, unsafeToolActivity: false };
+  }
+
+  async cancelPrompt(sessionId: string): Promise<void> {
+    this.cancelCalls.push(sessionId);
+    this.release?.();
+  }
+}
+
+test("取消信号会 cancelPrompt 并清理 fork", async () => {
+  const driver = new SlowDriver();
+  const controller = new AbortController();
+  const running = runKeepaliveOnce(driver, {
+    parentSessionId: "parent-existing",
+    cwd: "/isolated/workspace",
+    signal: controller.signal,
+  });
+  for (let attempt = 0; attempt < 1_000 && driver.release === undefined; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  controller.abort();
+  const report = await running;
+  assert.deepEqual(driver.cancelCalls, ["fork-created"]);
+  assert.equal(driver.forkDeleted, true);
+  assert.equal(report.deletedSessionIds.includes("fork-created"), true);
+});
 
 test("保活只提示 fork 并只清理 fork", async () => {
   const driver = new Driver();

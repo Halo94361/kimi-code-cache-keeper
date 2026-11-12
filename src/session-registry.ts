@@ -24,7 +24,7 @@ export interface RegistryOptions {
   intervalMs: number;
   maxIdleMs: number;
   now?: () => number;
-  probe: (session: KeeperSession) => Promise<ProbeResult>;
+  probe: (session: KeeperSession, signal: AbortSignal) => Promise<ProbeResult>;
   onChange?: () => void;
   setTimer?: typeof setTimeout;
   clearTimer?: typeof clearTimeout;
@@ -32,8 +32,9 @@ export interface RegistryOptions {
 
 interface MutableSession extends KeeperSession {
   probing: boolean;
-  pendingNow: boolean;
   timer: NodeJS.Timeout | null;
+  /** 正在执行的探测；真实回合、停止或重新开启时据此取消，避免与父会话并发。 */
+  abort: AbortController | null;
 }
 
 export class SessionRegistry {
@@ -60,9 +61,9 @@ export class SessionRegistry {
     const existing = this.sessions.get(sessionId);
     if (existing) {
       this.clear(existing);
+      existing.abort?.abort();
       existing.enabled = true;
       existing.busy = false;
-      existing.pendingNow = false;
       existing.cwd = cwd;
       existing.title = title ?? existing.title;
       existing.lastRealActivityAt = this.now();
@@ -84,8 +85,8 @@ export class SessionRegistry {
         hitRatio: null,
         error: null,
         probing: false,
-        pendingNow: false,
         timer: null,
+        abort: null,
       };
       this.sessions.set(sessionId, session);
       this.schedule(session);
@@ -97,9 +98,9 @@ export class SessionRegistry {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     this.clear(session);
+    session.abort?.abort();
     session.enabled = false;
     session.busy = false;
-    session.pendingNow = false;
     session.state = "disabled";
     session.nextProbeAt = null;
     this.onChange();
@@ -108,9 +109,9 @@ export class SessionRegistry {
   stopAll(): void {
     for (const session of this.sessions.values()) {
       this.clear(session);
+      session.abort?.abort();
       session.enabled = false;
       session.busy = false;
-      session.pendingNow = false;
       session.state = "disabled";
       session.nextProbeAt = null;
     }
@@ -121,6 +122,8 @@ export class SessionRegistry {
     const session = this.sessions.get(sessionId);
     if (!session?.enabled) return;
     this.clear(session);
+    // 真实回合开始时取消在飞探测，避免父会话与保活 fork 同时请求。
+    session.abort?.abort();
     session.busy = true;
     session.lastRealActivityAt = this.now();
     session.error = null;
@@ -133,28 +136,12 @@ export class SessionRegistry {
     session.busy = false;
     session.error = null;
     session.lastTurnEndAt = this.now();
-    if (session.pendingNow && !session.probing) {
-      session.pendingNow = false;
-      void this.runProbe(session);
-    } else if (!session.probing) {
-      this.schedule(session);
-    }
+    if (!session.probing) this.schedule(session);
     this.onChange();
   }
 
-  probeNow(sessionId: string): void {
-    const session = this.sessions.get(sessionId);
-    if (!session?.enabled || session.probing) return;
-    if (session.busy) {
-      session.pendingNow = true;
-      this.onChange();
-      return;
-    }
-    void this.runProbe(session);
-  }
-
   snapshot(): KeeperSession[] {
-    return [...this.sessions.values()].map(({ timer: _timer, probing: _probing, pendingNow: _pendingNow, ...session }) => ({ ...session }));
+    return [...this.sessions.values()].map(({ timer: _timer, probing: _probing, abort: _abort, ...session }) => ({ ...session }));
   }
 
   restore(sessions: KeeperSession[]): void {
@@ -164,8 +151,8 @@ export class SessionRegistry {
         ...session,
         busy: false,
         probing: false,
-        pendingNow: false,
         timer: null,
+        abort: null,
       });
       if (!session.enabled) continue;
       const restored = this.sessions.get(session.sessionId)!;
@@ -215,7 +202,6 @@ export class SessionRegistry {
 
   private async runProbe(session: MutableSession): Promise<void> {
     this.clear(session);
-    session.pendingNow = false;
     if (!session.enabled || session.busy || session.probing) return;
     if (this.now() - session.lastRealActivityAt >= this.maxIdleMs) {
       session.enabled = false;
@@ -225,22 +211,31 @@ export class SessionRegistry {
     }
     session.probing = true;
     session.state = "probing";
+    const controller = new AbortController();
+    session.abort = controller;
     this.onChange();
     try {
-      const result = await this.probe(session);
+      const result = await this.probe(session, controller.signal);
+      if (controller.signal.aborted) return;
       session.lastProbeAt = this.now();
       session.hitRatio = result.hitRatio;
       session.error = null;
     } catch (error) {
-      session.error = error instanceof Error ? error.message : String(error);
+      // 主动取消（真实回合开始、off、stop）不算保活失败。
+      if (!controller.signal.aborted) {
+        session.error = error instanceof Error ? error.message : String(error);
+      }
     } finally {
       session.probing = false;
+      session.abort = null;
       if (!session.enabled) {
         session.state = "disabled";
       } else if (session.error) {
         session.state = "paused";
       } else if (!session.busy) {
         this.schedule(session);
+      } else {
+        session.state = "waiting";
       }
       this.onChange();
     }

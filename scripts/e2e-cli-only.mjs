@@ -8,7 +8,7 @@ const parent = {
   workDir: resolve(home, "workspace"),
 };
 
-const controller = await startController({ home });
+const controller = await startController({ home, intervalMs: 1000 });
 const discovery = JSON.parse(await readFile(resolve(home, "cache-keeper", "controller.json"), "utf8"));
 
 async function call(method, path, body) {
@@ -27,7 +27,6 @@ async function call(method, path, body) {
 
 try {
   await call("POST", `/v1/sessions/${parent.sessionId}/on`, { cwd: parent.workDir, title: "CLI-only 验收" });
-  await call("POST", `/v1/sessions/${parent.sessionId}/now`, {});
   let kept;
   for (let attempt = 0; attempt < 120; attempt += 1) {
     const status = await call("GET", "/v1/status");

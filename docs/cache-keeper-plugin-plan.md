@@ -1,7 +1,9 @@
 # Kimi Code 会话缓存保活插件方案
 
-状态：设计记录，尚未实现
+状态：早期设计记录
 日期：2026-11-12
+
+> 当前实现以 `docs/cache-keeper-short-code-plan.md` 和代码为准：MCP/commands 已移除 `now`，单会话停止接口为 `/v1/sessions/{id}/off`，控制器保留 `/v1/status` 与 `/v1/stop` 供桌面壳使用。
 
 ## 背景与目标
 
@@ -91,12 +93,11 @@ A 收到新的真实用户消息或开始新回合
 /cache-keeper:on       为当前主会话开启保活
 /cache-keeper:off      关闭并清理当前主会话的保活 fork
 /cache-keeper:status   查看开关、下次触发时间、次数和最近缓存命中情况
-/cache-keeper:now      立即执行一次保活验证
 ```
 
 `UserPromptSubmit` hook 将命令文本和 `session_id` 同步给控制器；命令对应的 Agent 回复只用于展示用户主动请求的状态。需要首先验证插件 slash command 与该 hook 的执行顺序。
 
-通过 MCP 提供 `on` / `off` / `status` / `now` / `stop` 薄封装，供 LLM 调用同一控制器接口；控制 token 不暴露给模型。`UserPromptSubmit` 只注入当前 `sessionId` 和 `cwd`，不贡献 system prompt。MCP 只负责控制，实际保活由独立控制器执行。
+通过 MCP 提供 `on` / `off` / `status` 薄封装，供 LLM 调用同一控制器接口；控制 token 不暴露给模型。会话身份以短码传递，详细设计见短码方案文档。MCP 只负责控制，实际保活由独立控制器执行。
 
 ## 本地控制与壳集成接口
 
@@ -199,7 +200,6 @@ cache-keeper/
 │   ├── on.md
 │   ├── off.md
 │   ├── status.md
-│   └── now.md
 ├── src/
 │   ├── acp-client.ts
 │   ├── controller.ts
@@ -255,7 +255,7 @@ cache-keeper/
 
 ### 阶段 2：插件包装
 
-添加 manifest、commands、hooks 和安装/卸载说明，完成 on/off/status/now。卸载插件前提示用户先执行 off，并提供孤儿保活会话检查命令。
+添加 manifest、commands、hooks 和安装/卸载说明，完成 on/off/status。卸载插件前提示用户先执行 off，并提供孤儿保活会话检查命令。
 
 ### 阶段 3：测试与验收
 

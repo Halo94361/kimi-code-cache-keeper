@@ -16,7 +16,8 @@ export class WebClient {
     this.token = options.token;
   }
 
-  private async request(method: string, path: string, body?: unknown): Promise<any> {
+  private async request(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<any> {
+    const timeout = AbortSignal.timeout(30_000);
     const response = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers: {
@@ -24,7 +25,7 @@ export class WebClient {
         "Content-Type": "application/json",
       },
       body: body === undefined ? null : JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
+      signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
     });
     const payload = await response.json();
     if (payload.code !== 0) {
@@ -42,7 +43,14 @@ export class WebClient {
     return result.id;
   }
 
-  async prompt(sessionId: string, text: string): Promise<PromptResult> {
+  /** 读取会话真实忙碌状态，用于校正漏掉的 TurnStarted/Stop hook。 */
+  async sessionBusy(sessionId: string): Promise<boolean> {
+    const data = await this.request("GET", `/api/v1/sessions/${sessionId}`);
+    return data?.busy === true || data?.main_turn_active === true;
+  }
+
+  async prompt(sessionId: string, text: string, signal?: AbortSignal): Promise<PromptResult> {
+    signal?.throwIfAborted();
     const ws = new WebSocket(`${this.baseUrl.replace(/^http/, "ws")}/api/v1/ws`, [
       `kimi-code.bearer.${this.token}`,
     ]);
@@ -61,10 +69,29 @@ export class WebClient {
       const accepted = await this.request("POST", `/api/v1/sessions/${sessionId}/prompts`, {
         permission_mode: "manual",
         content: [{ type: "text", text }],
-      });
+      }, signal);
       promptId = accepted.prompt_id;
+      signal?.throwIfAborted();
       const stopReason = await new Promise<PromptResult["stopReason"]>((resolveTurn, rejectTurn) => {
-        const timer = setTimeout(() => rejectTurn(new Error("等待保活 turn 结束超时")), 120_000);
+        let timer: NodeJS.Timeout | undefined;
+        let settled = false;
+        let onAbort: (() => void) | undefined;
+        const cleanup = () => {
+          if (timer !== undefined) clearTimeout(timer);
+          if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
+        };
+        const settle = (action: () => void) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          action();
+        };
+        onAbort = () => {
+          void this.abort(sessionId, promptId).catch(() => undefined);
+          settle(() => rejectTurn(new Error("保活已取消")));
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+        timer = setTimeout(() => settle(() => rejectTurn(new Error("等待保活 turn 结束超时"))), 120_000);
         ws.onmessage = (event) => {
           const frame = JSON.parse(String(event.data));
           if (frame.type.startsWith("tool.call")) {
@@ -72,12 +99,10 @@ export class WebClient {
             void this.abort(sessionId, promptId).catch(() => {});
           }
           if (frame.type === "turn.ended") {
-            clearTimeout(timer);
-            resolveTurn(frame.reason === "completed" ? "end_turn" : "cancelled");
+            settle(() => resolveTurn(frame.reason === "completed" ? "end_turn" : "cancelled"));
           }
           if (frame.type === "event.session.work_changed" && frame.payload?.main_turn_active === false) {
-            clearTimeout(timer);
-            resolveTurn(frame.payload.last_turn_reason === "completed" ? "end_turn" : "cancelled");
+            settle(() => resolveTurn(frame.payload.last_turn_reason === "completed" ? "end_turn" : "cancelled"));
           }
         };
       });

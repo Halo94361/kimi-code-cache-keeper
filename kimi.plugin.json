@@ -1,6 +1,6 @@
 {
   "name": "cache-keeper",
-  "version": "0.1.4",
+  "version": "0.2.3",
   "description": "通过 ACP 临时 fork 进行零主上下文污染的 prompt-cache 保活",
   "commands": "./commands/",
   "interface": {
@@ -10,14 +10,31 @@
   "mcpServers": {
     "keeper": {
       "command": "node",
-      "args": ["./dist/mcp.js"]
+      "args": [
+        "./dist/mcp.js"
+      ]
     }
   },
   "hooks": [
     {
       "event": "UserPromptSubmit",
       "matcher": ".*",
-      "command": "node ./dist/hooks/session-context.js",
+      "command": "node ./dist/hooks/session-code.js",
+      "timeout": 5
+    },
+    {
+      "event": "SessionStart",
+      "command": "node ./dist/hooks/session-code.js",
+      "timeout": 5
+    },
+    {
+      "event": "PreCompact",
+      "command": "node ./dist/hooks/session-code.js",
+      "timeout": 5
+    },
+    {
+      "event": "PostCompact",
+      "command": "node ./dist/hooks/session-code.js",
       "timeout": 5
     },
     {

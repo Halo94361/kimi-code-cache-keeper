@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { withKimiAcp } from "./acp-client.js";
 import { ForkMap } from "./fork-map.js";
 import { runKeepaliveOnce } from "./keepalive.js";
+import { SessionCodes, SessionCodeError } from "./session-codes.js";
 import { SessionRegistry, type KeeperSession, type ProbeResult } from "./session-registry.js";
 import { WebClient } from "./web-client.js";
 import { runWebKeepaliveOnce } from "./web-keepalive.js";
@@ -16,11 +17,13 @@ interface ControllerOptions {
   home: string;
   intervalMs?: number;
   maxIdleMs?: number;
-  probe?: (session: KeeperSession) => Promise<ProbeResult>;
+  probe?: (session: KeeperSession, signal: AbortSignal) => Promise<ProbeResult>;
   web?: {
     baseUrl: string;
     token: string;
   };
+  /** Web 状态校正周期；默认 30 秒，测试可缩短。 */
+  reconcileMs?: number;
 }
 
 interface Discovery {
@@ -66,6 +69,12 @@ export async function startController(options: ControllerOptions): Promise<{ por
   const forkMap = new ForkMap(home);
   // 旧控制器留下的 fork 已不存在，启动时清空残留映射
   await forkMap.clear();
+  const codes = new SessionCodes(home);
+  await codes.prune().catch(() => undefined);
+  const pruneTimer = setInterval(() => {
+    void codes.prune().catch(() => undefined);
+  }, 60 * 60_000);
+  pruneTimer.unref();
   const discovered = options.probe === undefined && !options.web
     ? await discoverWebRuntime(home).catch(() => null)
     : null;
@@ -74,13 +83,14 @@ export async function startController(options: ControllerOptions): Promise<{ por
   const registry = new SessionRegistry({
     intervalMs: options.intervalMs ?? 20 * 60_000,
     maxIdleMs: options.maxIdleMs ?? 4 * 60 * 60_000,
-    probe: options.probe ?? (async (session) => {
+    probe: options.probe ?? (async (session, signal) => {
       if (web) {
         const client = new WebClient(web);
         const report = await runWebKeepaliveOnce(client, {
           parentSessionId: session.sessionId,
           diagnosticsHome: home,
           forkMap,
+          signal,
         });
         if (report.status !== "ok") throw new Error(report.error ?? "保活失败");
         return { hitRatio: report.diagnostics?.usage.cacheHitRatio ?? null };
@@ -90,6 +100,7 @@ export async function startController(options: ControllerOptions): Promise<{ por
         cwd: session.cwd,
         diagnosticsHome: home,
         forkMap,
+        signal,
       }));
       if (report.status !== "ok") throw new Error(report.error ?? "保活失败");
       return { hitRatio: report.diagnostics?.usage.cacheHitRatio ?? null };
@@ -107,6 +118,37 @@ export async function startController(options: ControllerOptions): Promise<{ por
   } catch {
     // 状态缺失或损坏时从空状态启动，不删除任何会话
   }
+
+  // hook 可能漏送 TurnStarted/Stop；用 Web 会话的真实 busy 状态校正本地计时。
+  const reconcileMs = options.reconcileMs ?? 30_000;
+  let reconciling = false;
+  const reconcile = async (): Promise<void> => {
+    if (web === null || reconciling) return;
+    reconciling = true;
+    try {
+      const client = new WebClient(web);
+      for (const session of registry.snapshot()) {
+        if (!session.enabled || session.state === "probing") continue;
+        try {
+          const busy = await client.sessionBusy(session.sessionId);
+          if (busy && !session.busy) {
+            registry.turnStarted(session.sessionId);
+          } else if (!busy && (session.busy || session.nextProbeAt === null)) {
+            registry.turnEnded(session.sessionId);
+          }
+        } catch {
+          // 单个会话查询失败不影响其它会话，下一轮重试
+        }
+      }
+    } finally {
+      reconciling = false;
+    }
+  };
+  const reconcileTimer = setInterval(() => {
+    void reconcile();
+  }, reconcileMs);
+  reconcileTimer.unref();
+  void reconcile();
 
   const token = randomBytes(32).toString("hex");
   const server: Server = createServer(async (req, res) => {
@@ -135,7 +177,54 @@ export async function startController(options: ControllerOptions): Promise<{ por
         json(res, 200, { status: "ok" });
         return;
       }
-      const match = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/(on|off|now|activity)$/);
+      const codeAction = url.pathname.match(/^\/v1\/code\/(on|off)$/);
+      if (req.method === "POST" && codeAction) {
+        const action = codeAction[1] as "on" | "off";
+        const input = await body(req);
+        const code = typeof input["code"] === "string" ? input["code"] : "";
+        const resolved = await codes.resolve(code);
+        if (action === "on") registry.enable(resolved.sessionId, resolved.cwd);
+        else registry.stop(resolved.sessionId);
+        json(res, 200, {
+          status: "ok",
+          action,
+          code: resolved.code,
+          sessionId: resolved.sessionId,
+          cwd: resolved.cwd,
+        });
+        return;
+      }
+      const codeStatus = url.pathname.match(/^\/v1\/code\/([^/]+)$/);
+      if (req.method === "GET" && codeStatus) {
+        const resolved = await codes.resolve(decodeURIComponent(codeStatus[1]!));
+        const session = registry.snapshot().find((entry) => entry.sessionId === resolved.sessionId);
+        json(res, 200, {
+          status: "ok",
+          code: resolved.code,
+          session: session === undefined
+            ? {
+              sessionId: resolved.sessionId,
+              title: null,
+              cwd: resolved.cwd,
+              enabled: false,
+              busy: false,
+              state: "disabled",
+              nextProbeAt: null,
+              lastProbeAt: null,
+              lastRealActivityAt: null,
+              hitRatio: null,
+              error: null,
+            }
+            : {
+              ...session,
+              nextProbeAt: iso(session.nextProbeAt),
+              lastProbeAt: iso(session.lastProbeAt),
+              lastRealActivityAt: iso(session.lastRealActivityAt),
+            },
+        });
+        return;
+      }
+      const match = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/(on|off|activity)$/);
       if (req.method === "POST" && match) {
         const sessionId = decodeURIComponent(match[1]!);
         const action = match[2];
@@ -147,8 +236,6 @@ export async function startController(options: ControllerOptions): Promise<{ por
           registry.enable(sessionId, cwd, title);
         } else if (action === "off") {
           registry.stop(sessionId);
-        } else if (action === "now") {
-          registry.probeNow(sessionId);
         } else {
           const event = input["event"];
           if (event === "TurnStarted") registry.turnStarted(sessionId);
@@ -160,6 +247,11 @@ export async function startController(options: ControllerOptions): Promise<{ por
       }
       json(res, 404, { status: "error", error: "未知接口" });
     } catch (error) {
+      if (error instanceof SessionCodeError) {
+        const status = error.kind === "invalid" ? 400 : error.kind === "unknown" ? 404 : 409;
+        json(res, status, { status: "error", error: error.message });
+        return;
+      }
       json(res, 400, {
         status: "error",
         error: error instanceof Error ? error.message : String(error),
@@ -180,6 +272,8 @@ export async function startController(options: ControllerOptions): Promise<{ por
   console.log(JSON.stringify({ status: "listening", port: address.port }));
 
   const close = async () => {
+    clearInterval(pruneTimer);
+    clearInterval(reconcileTimer);
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     saveQueue = saveQueue.then(async () => {
       await atomicJson(statePath, { version: STATE_VERSION, sessions: registry.snapshot() });

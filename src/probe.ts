@@ -22,6 +22,8 @@ export interface ProbeDriver {
   forkSession(sessionId: string, cwd: string): Promise<SessionDescriptor>;
   setManualMode(sessionId: string, modes: acp.SessionModeState | null | undefined): Promise<void>;
   prompt(sessionId: string, text: string): Promise<PromptResult>;
+  /** 取消当前正在进行的 prompt；用于真实回合开始时停止在飞保活。 */
+  cancelPrompt(sessionId: string): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
 }
 

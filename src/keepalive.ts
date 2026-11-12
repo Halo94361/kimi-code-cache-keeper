@@ -8,6 +8,8 @@ export interface KeepaliveOptions {
   cwd: string;
   diagnosticsHome?: string;
   forkMap?: ForkMap;
+  /** 真实回合开始、off/stop 时取消在飞保活。 */
+  signal?: AbortSignal;
 }
 
 export interface KeepaliveReport {
@@ -38,14 +40,22 @@ export async function runKeepaliveOnce(
     error: null,
   };
 
+  let onAbort: (() => void) | undefined;
   try {
+    options.signal?.throwIfAborted();
     const init = await driver.initialize();
     assertSessionLifecycleCapabilities(init);
     await driver.authenticate();
+    options.signal?.throwIfAborted();
 
     const fork = await driver.forkSession(options.parentSessionId, options.cwd);
     report.forkSessionId = fork.sessionId;
     await options.forkMap?.record(fork.sessionId, options.parentSessionId);
+    onAbort = () => {
+      void driver.cancelPrompt(fork.sessionId).catch(() => undefined);
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    options.signal?.throwIfAborted();
     const resumedFork = await driver.resumeSession(fork.sessionId, options.cwd);
     await driver.setManualMode(fork.sessionId, resumedFork.modes ?? fork.modes);
     report.forkPrompt = await driver.prompt(fork.sessionId, KEEPALIVE_PROMPT);
@@ -74,6 +84,7 @@ export async function runKeepaliveOnce(
     if (process.env.CACHE_KEEPER_ACP_DEBUG === "1") console.error(error);
     report.error = errorMessage(error);
   } finally {
+    if (onAbort !== undefined) options.signal?.removeEventListener("abort", onAbort);
     if (report.forkSessionId) {
       try {
         await driver.deleteSession(report.forkSessionId);

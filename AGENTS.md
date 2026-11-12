@@ -4,7 +4,7 @@
 
 本仓库实现一个 Kimi Code 缓存保活插件。主会话空闲达到阈值后，通过 ACP 创建独立的临时 fork，在 fork 内执行最小模型请求，以维持主会话共享的 prompt-cache 前缀；主会话恢复活动后清理 fork。
 
-当前处于阶段 0：先验证 ACP、缓存共享和跨进程会话协作，尚未搭建完整插件。
+短码与会话隔离的完整设计见 `docs/cache-keeper-short-code-plan.md`；实现以该文档为准，不按 cwd/busy 推断会话身份。
 
 ## 架构约束
 
@@ -12,8 +12,10 @@
 - 保活消息只能进入临时 fork，禁止在主会话中发送心跳。
 - 不修改 Kimi CLI 源码，不引入模型代理，不修改 provider `base_url`。
 - 不使用 `CronCreate`、`WaitFor` 或主会话定时回复。
-- 通过 MCP 提供 `on` / `off` / `status` / `now` / `stop` 薄封装，供 LLM 调用同一控制器接口；slash commands 直接指示模型调用对应工具，控制 token 不得暴露给模型。`UserPromptSubmit` 只注入当前 `sessionId` 和 `cwd`，不贡献 system prompt。
+- 通过 MCP 提供 `on` / `off` / `status` 薄封装，全部以本会话 9 位短码 `code` 为唯一定位参数；不向模型暴露 `now` / `stop`，也不接受 `sessionId` 或按 cwd/busy 推断。slash commands 直接指示模型调用对应工具，控制 token 不得暴露给模型。
+- `UserPromptSubmit` 只在会话首次激活、`SessionStart` 恢复或 `PreCompact`/`PostCompact` 后补发时注入短码；其余提交输出空字符串。短码文件是会话身份的唯一映射，控制器只按码精确解析，禁止跨会话猜测。会话结束不删除短码，压缩/重载/恢复后仍是同一码，回收只靠 30 天 TTL。
 - 控制器是独立的 Node.js 进程，每个 `KIMI_CODE_HOME` 最多一个实例，不依赖 Web 会话常驻内存。
+- 控制器每 30 秒通过同实例 Web 的 session busy 状态校正 `TurnStarted`/`Stop` 漏送；纯 CLI 无 Web 时仅依赖活动 hook。
 - 插件 commands 和 hooks 保持薄入口，会话状态机、ACP 通信和安全策略放在可测试的核心模块中。
 
 ## 技术栈与结构
@@ -33,6 +35,7 @@ src/
   acp-client.ts
   controller.ts
   fork-map.ts
+  session-codes.ts
   session-registry.ts
   scheduler.ts
   safety.ts
@@ -71,7 +74,7 @@ dist/                 # 构建产物，不直接提交
 2. fork 与主会话的 `systemPromptHash`、`toolsHash`、model 和协议一致。
 3. fork 的保活请求能读取主会话留下的缓存前缀，超过原缓存期限后主会话仍能命中。
 4. 主会话 `wire.jsonl` 不包含保活消息，删除 fork 不影响主会话。
-5. `UserPromptSubmit` 能同时取得插件 slash command 与正确的 `session_id`。
+5. `UserPromptSubmit` 能在会话首次激活时注入 9 位短码，后续提交静默；短码可精确映射到单个会话，不依赖 cwd/busy 推断。
 6. 保活 fork 的工具调用会被拒绝，清理逻辑不会触及非本插件创建的会话。
 
 如果 ACP 与 Web 生成的前缀不一致，先暂停完整实现，评估同一 `kimi web` 进程的公开 REST `:fork` + `prompts`，不要退回模型代理或主会话心跳。

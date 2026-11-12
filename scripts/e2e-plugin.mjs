@@ -96,8 +96,8 @@ try {
   const source = process.env.CACHE_KEEPER_E2E_SOURCE ?? packageDir;
   const plugin = await api("POST", "/api/v1/plugins", { source });
   installed = true;
-  assert(plugin.commandCount === 4, `命令数量异常：${plugin.commandCount}`);
-  assert(plugin.hookCount === 7, `hook 数量异常：${plugin.hookCount}`);
+  assert(plugin.commandCount === 3, `命令数量异常：${plugin.commandCount}`);
+  assert(plugin.hookCount === 9, `hook 数量异常：${plugin.hookCount}`);
   assert(plugin.mcpServerCount === 1, `MCP 数量异常：${plugin.mcpServerCount}`);
   assert(!plugin.hasErrors, "插件安装报告了错误");
 

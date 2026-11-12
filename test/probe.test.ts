@@ -41,6 +41,7 @@ class MockDriver implements ProbeDriver {
       unsafeToolActivity: unsafe,
     };
   }
+  async cancelPrompt(): Promise<void> {}
   async deleteSession(sessionId: string): Promise<void> {
     if (this.failDelete) throw new Error("mock delete failed");
     this.deleted.push(sessionId);
