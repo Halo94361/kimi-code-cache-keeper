@@ -93,7 +93,8 @@ try {
   baseUrl = readyResult.url;
   token = readyResult.token;
 
-  const plugin = await api("POST", "/api/v1/plugins", { source: packageDir });
+  const source = process.env.CACHE_KEEPER_E2E_SOURCE ?? packageDir;
+  const plugin = await api("POST", "/api/v1/plugins", { source });
   installed = true;
   assert(plugin.commandCount === 4, `命令数量异常：${plugin.commandCount}`);
   assert(plugin.hookCount === 7, `hook 数量异常：${plugin.hookCount}`);
