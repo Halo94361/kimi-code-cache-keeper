@@ -1,0 +1,90 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { SessionRegistry, type KeeperSession } from "../src/session-registry.js";
+
+function harness() {
+  let time = 0;
+  const timers = new Map<number, { callback: () => void; dueAt: number }>();
+  let sequence = 0;
+  let probes = 0;
+  const registry = new SessionRegistry({
+    intervalMs: 100,
+    maxIdleMs: 250,
+    now: () => time,
+    setTimer: ((callback: () => void, delay: number) => {
+      const id = ++sequence;
+      timers.set(id, { callback, dueAt: time + delay });
+      return { id, unref() {} } as unknown as NodeJS.Timeout;
+    }) as typeof setTimeout,
+    clearTimer: ((timer: NodeJS.Timeout) => {
+      timers.delete((timer as unknown as { id: number }).id);
+    }) as typeof clearTimeout,
+    probe: async () => {
+      probes += 1;
+      return { hitRatio: 0.9 };
+    },
+  });
+  const advance = async (ms: number) => {
+    time += ms;
+    const pending = [...timers.entries()].filter(([, timer]) => timer.dueAt <= time);
+    for (const [id] of pending) timers.delete(id);
+    for (const [, timer] of pending) timer.callback();
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  return { registry, advance, probes: () => probes, pending: () => timers.size };
+}
+
+test("开启后倒计时保活，停止后不再触发", async () => {
+  const { registry, advance, probes } = harness();
+  registry.enable("a", "/workspace");
+  await advance(100);
+  assert.equal(probes(), 1);
+  registry.stop("a");
+  await advance(100);
+  assert.equal(probes(), 1);
+});
+
+test("真实回合取消旧倒计时，结束后重新计算", async () => {
+  const { registry, advance, probes, pending } = harness();
+  registry.enable("a", "/workspace");
+  await advance(50);
+  registry.turnStarted("a");
+  assert.equal(pending(), 0);
+  await advance(100);
+  assert.equal(probes(), 0);
+  registry.turnEnded("a");
+  await advance(99);
+  assert.equal(probes(), 0);
+  await advance(1);
+  assert.equal(probes(), 1);
+});
+
+test("超过最大空闲时间自动退休", async () => {
+  const { registry, advance, probes } = harness();
+  registry.enable("a", "/workspace");
+  await advance(250);
+  assert.equal(probes(), 0);
+  assert.equal(registry.snapshot()[0]?.state, "expired");
+});
+
+test("保活异常进入暂停，真实活动后可恢复", async () => {
+  let time = 0;
+  let shouldFail = true;
+  const registry = new SessionRegistry({
+    intervalMs: 1,
+    maxIdleMs: 100,
+    now: () => time,
+    probe: async (_session: KeeperSession) => {
+      if (shouldFail) throw new Error("mock failure");
+      return { hitRatio: 0.8 };
+    },
+  });
+  registry.enable("a", "/workspace");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(registry.snapshot()[0]?.state, "paused");
+  shouldFail = false;
+  registry.turnStarted("a");
+  registry.turnEnded("a");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(registry.snapshot()[0]?.state, "waiting");
+});

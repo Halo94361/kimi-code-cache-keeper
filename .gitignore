@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.probe-home/
+.e2e-plugin/
 coverage/
 *.log
 *.tmp

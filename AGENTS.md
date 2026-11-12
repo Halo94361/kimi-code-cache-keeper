@@ -12,7 +12,7 @@
 - 保活消息只能进入临时 fork，禁止在主会话中发送心跳。
 - 不修改 Kimi CLI 源码，不引入模型代理，不修改 provider `base_url`。
 - 不使用 `CronCreate`、`WaitFor` 或主会话定时回复。
-- 首版不新增 MCP 工具，不贡献 system prompt，避免改变模型请求的工具或系统前缀。
+- 通过 MCP 提供 `on` / `off` / `status` / `now` / `stop` 薄封装，供 LLM 调用同一控制器接口；控制 token 不得暴露给模型。`UserPromptSubmit` 只注入当前 `sessionId` 和 `cwd`，不贡献 system prompt。
 - 控制器是独立的 Node.js 进程，每个 `KIMI_CODE_HOME` 最多一个实例，不依赖 Web 会话常驻内存。
 - 插件 commands 和 hooks 保持薄入口，会话状态机、ACP 通信和安全策略放在可测试的核心模块中。
 
@@ -45,10 +45,11 @@ dist/                 # 构建产物，不直接提交
 ## 安全红线
 
 - 禁止提交或打印 API key、OAuth token、cookie、凭据文件、SSH 私钥和 `.env` 内容。
-- 不读取 `~/.kimi-code/credentials/`、`server.token` 或其他凭据存储；ACP 复用 CLI 自身登录状态。
+- 不读取 `~/.kimi-code/credentials/` 或其他凭据存储；ACP 复用 CLI 自身登录状态。仅允许为同实例 Web REST 只读发现 `server.token`、`server/instances/` 元数据和启动日志中的地址与 token，禁止输出、复制、持久化或上传这些凭据。
 - 不把真实会话导出、`wire.jsonl`、私人对话或项目代码提交为测试夹具。夹具必须人工构造并脱敏。
 - 日志与持久化状态不得包含 token、请求正文、回复正文或完整会话内容，只保存开关、session ID、计时和匿名 usage 统计。
 - 只能取消或删除控制器自己创建且归属明确的保活 fork；无法确认归属时保留并报告，禁止误删。
+- ACP driver 必须使用创建时登记、删除时校验的所有权白名单：生产保活路径禁止删除原始 session 和未知 session；fork 返回值与父会话相同时立即失败。阶段 0 自建测试父会话的清理也必须单独显式开启，不得默认可用。
 - 真实 ACP 验证使用独立测试会话和隔离的 `KIMI_CODE_HOME`，不得操作用户现有正式会话。
 - 保活 fork 使用需要审批的权限模式，拒绝所有权限请求；出现 tool-call 事件时立即取消并暂停该会话保活。
 
