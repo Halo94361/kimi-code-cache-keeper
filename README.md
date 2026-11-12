@@ -25,6 +25,19 @@ Kimi Code 的 prompt-cache 保活插件：主会话空闲时，通过独立临�
 
 要求：Node.js 22+，以及已安装并可用的 `kimi` 命令。
 
+### 通过 GitHub release 安装
+
+在 Kimi Code 中执行：
+
+```text
+/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.1.0/cache-keeper-v0.1.0.zip
+/plugins reload
+```
+
+发布包已包含编译后的 JavaScript 和 ACP SDK，不需要执行 `npm install`。
+
+### 从本地目录安装
+
 开发目录中先构建：
 
 ```bash
@@ -32,14 +45,12 @@ npm ci
 npm run build
 ```
 
-在 Kimi Code 中安装本地插件：
+然后安装：
 
 ```text
 /plugins install D:\My_GitLab\kimi-code-cache-keeper
 /plugins reload
 ```
-
-仓库公开后，也计划支持通过 GitHub release 安装。发布包中的 TypeScript 和 ACP SDK 已打包为普通 JS，不需要执行 `npm install`。
 
 ## 使用
 
@@ -97,15 +108,6 @@ node scripts/e2e-plugin.mjs
 ```
 
 测试统一使用隔离的 `.probe-home`，不读取或复制默认 home 中的凭据。完整 probe 会产生真实模型请求；未指定 `--session` 时，阶段 0 测试父会话与 fork 都会清理，指定已有测试父会话时只清理 fork。
-
-## 当前验证结果
-
-- 类型检查、32 个模拟测试和 esbuild 打包通过。
-- ACP 即时 fork 验证中，前缀 hash 一致，缓存命中率约 97.8%。
-- fork 保活后等待 20 分钟，再恢复父会话，最近一次缓存命中率约 98.1%。
-- 同实例 REST 保活验证中，最近一次缓存命中率约 99.48%，保活 fork 已从 children 列表永久删除。
-- CLI-only ACP 回退路径也已通过，缓存命中率约 99.48%。
-- 插件安装结构验证通过：4 个 commands、7 个 hooks、1 个 MCP server。
 
 ## 安全与隐私
 

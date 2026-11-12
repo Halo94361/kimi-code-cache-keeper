@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Package plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .release
+          mkdir -p .release/staging
+          cp kimi.plugin.json package.json README.md AGENTS.md .release/staging/
+          cp -r commands dist .release/staging/
+          cd .release/staging
+          zip -r "../cache-keeper-${GITHUB_REF_NAME#v}.zip" .
+      - name: Publish release archive
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" ".release/cache-keeper-${GITHUB_REF_NAME#v}.zip" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" ".release/cache-keeper-${GITHUB_REF_NAME#v}.zip" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "Cache Keeper ${GITHUB_REF_NAME}: ACP / Web REST 双模式保活、永久删除 fork、MCP 控制。"
+          fi
