@@ -1,124 +1,139 @@
 # Kimi Code Cache Keeper
 
-Kimi Code 的 prompt-cache 保活插件：主会话空闲时，通过独立临时 fork 执行最小模型请求，维持共享缓存前缀，同时避免保活消息污染主会话。
+Keeps the provider-side prompt cache warm for idle Kimi Code sessions. Each
+keep-alive request runs in a temporary ACP or `kimi web` fork, so the main
+conversation never sees the message or the reply.
 
-## 核心特性
+[中文说明](#中文说明)
 
-- 主会话不出现保活 prompt 或回复。
-- 默认空闲 20 分钟后保活，真实回合自动取消并重新计时。
-- 控制器重启后沿用原定的下次探测时间；若已过点则立即补一次，不重新等满 20 分钟。
-- 最大连续空闲保活 4 小时，异常时暂停，不无限消耗配额。
-- 支持单会话开关、立即保活、状态查询和全部停止。
-- 同时提供手动 slash commands 和 LLM 可调用的 MCP 工具。
-- ACP driver 采用所有权白名单，只能删除本次创建的 fork，生产路径不能删除原始 session。
-- 保活 fork 登记在 `<KIMI_CODE_HOME>/cache-keeper/fork-map.json`，供本机请求代理把 `x-opencode-session` 映射回父会话，避免 OpenCode Go 把临时 fork 当作新会话、缓存全未命中。
+## Features
 
-## 双模式工作方式
+- No keep-alive prompt or reply in the main session
+- Default: one probe 20 minutes after the last turn; stops after 4 hours idle
+- Controller restarts keep the planned probe time; overdue probes run immediately
+- Per-session on/off, probe now, status, stop all
+- Slash commands and MCP tools
+- Fork ownership allowlist: only forks created by this plugin can be deleted
+- Writes `fork-map.json` so a local proxy can reuse the parent session's
+  OpenCode Go cache affinity
 
-### 正在运行 `kimi web`
+## Requirements
 
-控制器只读发现 `$KIMI_CODE_HOME/server.token` 和 `server/instances/` 中的地址，经健康检查后，通过同一个 Web 实例的 REST 完成 fork、prompt 和永久删除。不会额外启动 Web 进程，端口变化不影响 token。
+- Node.js 22+
+- Kimi Code CLI with `session/fork` and `session/delete` (verified on 2.5.3)
+- A running `kimi web` for the REST path; otherwise ACP is used
 
-### 纯 CLI、没有运行中的 Web 实例
-
-回退到 ACP，通过 `kimi acp` 完成 fork 和永久删除，不需要 Web token。父会话被其他进程占用时不会强行接管。
-
-## 安装
-
-要求：Node.js 22+，以及已安装并可用的 `kimi` 命令。
-
-### 通过 GitHub release 安装
-
-在 Kimi Code 中执行：
+## Install
 
 ```text
-/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.1.1/cache-keeper-0.1.1.zip
+/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.1.4/cache-keeper-0.1.4.zip
 /plugins reload
 ```
 
-发布包已包含编译后的 JavaScript 和 ACP SDK，不需要执行 `npm install`。
+From a local checkout: `npm ci && npm run build`, then
+`/plugins install <path-to-repo>` and `/plugins reload`.
 
-### 从本地目录安装
+## Usage
 
-开发目录中先构建：
+| Command | Action |
+| --- | --- |
+| `/cache-keeper:on` | enable keep-alive for the current session |
+| `/cache-keeper:off` | disable it |
+| `/cache-keeper:status` | countdown, last hit ratio, state |
+| `/cache-keeper:now` | probe once after the current turn |
 
-```bash
-npm ci
-npm run build
-```
+MCP tools: `on`, `off`, `status`, `now`, `stop`. The `UserPromptSubmit` hook
+only injects the current `sessionId` and `cwd`; the control token never
+reaches the model.
 
-然后安装：
+## Compatibility and limits
 
-```text
-/plugins install D:\My_GitLab\kimi-code-cache-keeper
-/plugins reload
-```
+- Verified on Kimi Code CLI 2.5.3, Windows. Linux code paths exist but are
+  less tested.
+- The REST path uses kimi web's internal endpoints; CLI upgrades may change
+  them. Failures surface as `error` / `paused` instead of silently skipping.
+- The OpenCode Go `x-opencode-session` fix needs `opencode-session-proxy`
+  shipped with `tauri_kimi` 0.7.7+. A plain CLI install gets the fork
+  keep-alive only, not that header repair.
+- Oversized or unparsable requests may fall back to a process-wide session ID.
+- State lives in `<KIMI_CODE_HOME>/cache-keeper/state.json`; it contains no
+  message content, tokens or API keys.
 
-## 使用
-
-手动命令：
-
-```text
-/cache-keeper:on       开启当前会话保活
-/cache-keeper:off      关闭当前会话保活
-/cache-keeper:status   查看倒计时、最近命中率和运行状态
-/cache-keeper:now      在当前命令回合结束后立即保活一次
-```
-
-以上 slash commands 会直接指示 LLM 调用对应的 MCP 工具并报告同步返回结果。也可以直接对 LLM 说“开启当前会话的缓存保活”“查询保活状态”或“停止全部保活”。MCP 提供 `on`、`off`、`status`、`now`、`stop` 五个工具；`UserPromptSubmit` hook 只向模型提供当前 `sessionId` 和 `cwd`，不会暴露控制 token。
-
-## 开发与验证
+## Development
 
 ```bash
 npm ci
-npm run check
-```
-
-独立 ACP 验证：
-
-```bash
-# 仅握手，不发起模型请求
+npm run check                 # typecheck + tests + build
 npm run probe -- handshake --home .probe-home
-
-# 在隔离 home 中独立登录一次
-export KIMI_CODE_HOME="$PWD/.probe-home"
-kimi login
-
-# 完整 fork/prompt/usage/delete 验证
-npm run probe -- probe --home .probe-home
-
-# fork 保活后等待 20 分钟，再恢复父会话验证
-npm run probe -- probe --home .probe-home --wait-seconds 1200
 ```
 
-同实例 REST 控制器验收：
+E2E scripts (`e2e-controller.mjs`, `e2e-cli-only.mjs`, `e2e-plugin.mjs`) use
+an isolated `.probe-home`; full probes make real model requests.
+
+## License
+
+MIT. Community project, not affiliated with Moonshot AI.
+
+---
+
+## 中文说明
+
+Kimi Code 的 prompt-cache 保活插件：主会话空闲时，在临时 ACP / `kimi web`
+fork 中执行一次最小请求维持缓存前缀，保活消息与回复都不会出现在主会话。
+
+### 特性
+
+- 主会话零污染，不产生保活消息或回复
+- 默认最后一轮结束 20 分钟后保活，连续空闲 4 小时后自动停止
+- 控制器重启沿用原定探测时间，已过点立即补一次
+- 单会话开关、立即保活、状态查询、全部停止
+- 同时提供 slash commands 与 MCP 工具
+- fork 所有权白名单，只能删除本插件创建的临时会话
+- 写入 `fork-map.json`，供本机代理复用父会话的 OpenCode Go 缓存亲和
+
+### 安装
+
+```text
+/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.1.4/cache-keeper-0.1.4.zip
+/plugins reload
+```
+
+本地目录：先 `npm ci && npm run build`，再 `/plugins install <仓库路径>` 并
+`/plugins reload`。
+
+### 使用
+
+| 命令 | 作用 |
+| --- | --- |
+| `/cache-keeper:on` | 开启当前会话保活 |
+| `/cache-keeper:off` | 关闭 |
+| `/cache-keeper:status` | 查看倒计时、命中率与状态 |
+| `/cache-keeper:now` | 当前回合结束后立即探测一次 |
+
+MCP 提供 `on`、`off`、`status`、`now`、`stop` 五个工具。`UserPromptSubmit`
+hook 只向模型提供当前 `sessionId` 与 `cwd`，控制 token 不进入上下文。
+
+### 兼容性与限制
+
+- 在 Kimi Code CLI 2.5.3（Windows）验证；Linux 代码路径可用但测试较少
+- Web 模式使用 kimi web 内部 REST 端点，CLI 升级可能变化；失败会标记为
+  `error` / `paused`，不会静默跳过
+- OpenCode Go 的 `x-opencode-session` 修复需要 `tauri_kimi` 0.7.7+ 附带的
+  `opencode-session-proxy`；纯 CLI 安装只获得 fork 保活
+- 超过请求体上限或无法解析时退回进程级会话 ID
+- 状态保存在 `<KIMI_CODE_HOME>/cache-keeper/state.json`，不含消息正文、
+  token 或 API key
+
+### 开发
 
 ```bash
-node scripts/e2e-controller.mjs
+npm ci
+npm run check                 # 类型检查 + 测试 + 构建
+npm run probe -- handshake --home .probe-home
 ```
 
-CLI-only ACP 回退验收：
+E2E 脚本使用隔离的 `.probe-home`；完整 probe 会产生真实模型请求。
 
-```bash
-node scripts/e2e-cli-only.mjs
-```
+### 许可证
 
-插件安装结构验收：
-
-```bash
-node scripts/e2e-plugin.mjs
-```
-
-测试统一使用隔离的 `.probe-home`，不读取或复制默认 home 中的凭据。完整 probe 会产生真实模型请求；未指定 `--session` 时，阶段 0 测试父会话与 fork 都会清理，指定已有测试父会话时只清理 fork。
-
-## 安全与隐私
-
-不得提交 API key、OAuth token、凭据文件、真实会话导出、`wire.jsonl` 或包含私人对话内容的测试数据。测试夹具必须人工构造并脱敏。
-
-`server.token`、实例元数据和必要的启动日志只用于只读发现同实例 Web REST，禁止输出、复制、持久化或上传这些凭据。持久化状态仅包含开关、session ID、计时和匿名 usage 统计，不包含消息正文。
-
-本项目是社区工具，与 Moonshot AI 官方无关。缓存行为和实际收益以服务端行为及真实用量统计为准。
-
-## 开发计划
-
-完整设计与实施计划见 [docs/cache-keeper-plugin-plan.md](docs/cache-keeper-plugin-plan.md)，包括 ACP 可行性验证、控制器与插件实现、本地控制接口，以及后续 `tauri_kimi` 顶栏状态与停止控制集成。
+MIT。社区项目，与 Moonshot AI 官方无关。
