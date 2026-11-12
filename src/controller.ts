@@ -130,10 +130,13 @@ export async function startController(options: ControllerOptions): Promise<{ por
       for (const session of registry.snapshot()) {
         if (!session.enabled || session.state === "probing") continue;
         try {
-          const busy = await client.sessionBusy(session.sessionId);
-          if (busy && !session.busy) {
+          const info = await client.sessionInfo(session.sessionId);
+          if (info.title !== null && info.title !== session.title) {
+            registry.setTitle(session.sessionId, info.title);
+          }
+          if (info.busy && !session.busy) {
             registry.turnStarted(session.sessionId);
-          } else if (!busy && (session.busy || session.nextProbeAt === null)) {
+          } else if (!info.busy && (session.busy || session.nextProbeAt === null)) {
             registry.turnEnded(session.sessionId);
           }
         } catch {
@@ -238,9 +241,9 @@ export async function startController(options: ControllerOptions): Promise<{ por
           registry.stop(sessionId);
         } else {
           const event = input["event"];
-          if (event === "TurnStarted") registry.turnStarted(sessionId);
+          if (event === "TurnStarted") registry.turnStarted(sessionId, title);
           else if (event === "SessionEnd") registry.stop(sessionId);
-          else registry.turnEnded(sessionId);
+          else registry.turnEnded(sessionId, title);
         }
         json(res, 200, { status: "ok", action, sessionId });
         return;

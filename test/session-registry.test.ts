@@ -196,3 +196,20 @@ test("崩溃时正在回合中则从恢复时刻重新计时", async () => {
   await advance(1);
   assert.equal(probes(), 1);
 });
+
+test("hook 与 reconcile 补齐会话标题供面板展示", async () => {
+  const { registry } = harness();
+  registry.enable("a", "/workspace");
+  assert.equal(registry.snapshot()[0]?.title, null);
+  registry.turnStarted("a", "写代码");
+  assert.equal(registry.snapshot()[0]?.title, "写代码");
+  registry.turnEnded("a");
+  assert.equal(registry.snapshot()[0]?.title, "写代码");
+  // 短码 on 不带标题时保留已有标题
+  registry.enable("a", "/workspace");
+  assert.equal(registry.snapshot()[0]?.title, "写代码");
+  registry.setTitle("a", "改名为重构");
+  assert.equal(registry.snapshot()[0]?.title, "改名为重构");
+  // 未知会话静默忽略
+  registry.setTitle("missing", "x");
+});

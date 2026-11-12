@@ -43,10 +43,17 @@ export class WebClient {
     return result.id;
   }
 
-  /** 读取会话真实忙碌状态，用于校正漏掉的 TurnStarted/Stop hook。 */
-  async sessionBusy(sessionId: string): Promise<boolean> {
+  /** 读取会话真实忙碌状态与标题；标题用于面板展示，忙碌状态用于校正漏掉的 TurnStarted/Stop hook。 */
+  async sessionInfo(sessionId: string): Promise<{ busy: boolean; title: string | null }> {
     const data = await this.request("GET", `/api/v1/sessions/${sessionId}`);
-    return data?.busy === true || data?.main_turn_active === true;
+    return {
+      busy: data?.busy === true || data?.main_turn_active === true,
+      title: typeof data?.title === "string" && data.title.length > 0 ? data.title : null,
+    };
+  }
+
+  async sessionBusy(sessionId: string): Promise<boolean> {
+    return (await this.sessionInfo(sessionId)).busy;
   }
 
   async prompt(sessionId: string, text: string, signal?: AbortSignal): Promise<PromptResult> {

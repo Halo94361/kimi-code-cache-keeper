@@ -56,7 +56,7 @@ export async function handleMcp(request: JsonRpcRequest, home: string): Promise<
     return result(id, {
       protocolVersion: "2024-11-05",
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "cache-keeper", version: "0.2.3" },
+      serverInfo: { name: "cache-keeper", version: "0.2.4" },
     });
   }
   if (method === "ping") return result(id, {});

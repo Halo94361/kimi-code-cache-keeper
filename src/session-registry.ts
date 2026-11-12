@@ -118,25 +118,35 @@ export class SessionRegistry {
     this.onChange();
   }
 
-  turnStarted(sessionId: string): void {
+  turnStarted(sessionId: string, title: string | null = null): void {
     const session = this.sessions.get(sessionId);
     if (!session?.enabled) return;
     this.clear(session);
     // 真实回合开始时取消在飞探测，避免父会话与保活 fork 同时请求。
     session.abort?.abort();
     session.busy = true;
+    if (title) session.title = title;
     session.lastRealActivityAt = this.now();
     session.error = null;
     this.onChange();
   }
 
-  turnEnded(sessionId: string): void {
+  turnEnded(sessionId: string, title: string | null = null): void {
     const session = this.sessions.get(sessionId);
     if (!session?.enabled) return;
     session.busy = false;
+    if (title) session.title = title;
     session.error = null;
     session.lastTurnEndAt = this.now();
     if (!session.probing) this.schedule(session);
+    this.onChange();
+  }
+
+  /** 短码 on 与 hook 都可能拿不到标题；用 Web 会话信息补齐，供面板展示。 */
+  setTitle(sessionId: string, title: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.title === title) return;
+    session.title = title;
     this.onChange();
   }
 

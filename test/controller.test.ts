@@ -157,3 +157,54 @@ test("短码接口精确开启并查询单个会话", async () => {
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("reconcile 用 Web 会话标题补齐面板显示", async () => {
+  const home = await mkdtemp(join(tmpdir(), "cache-keeper-title-"));
+  const webServer = createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
+    response.end(JSON.stringify({
+      code: 0,
+      msg: "success",
+      data: { busy: false, main_turn_active: false, title: "重构保活插件" },
+    }));
+  });
+  await new Promise<void>((resolve) => webServer.listen(0, "127.0.0.1", resolve));
+  const address = webServer.address();
+  if (address === null || typeof address === "string") throw new Error("mock web 监听失败");
+  const controller = await startController({
+    home,
+    intervalMs: 10_000,
+    reconcileMs: 10,
+    web: { baseUrl: `http://127.0.0.1:${address.port}`, token: "test" },
+    probe: async () => ({ hitRatio: 0.9 }),
+  });
+  try {
+    const discovery = JSON.parse(await readFile(join(home, "cache-keeper", "controller.json"), "utf8"));
+    const base = `http://127.0.0.1:${controller.port}`;
+    const call = async (method: string, path: string, body?: unknown) => {
+      const response = await fetch(`${base}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${discovery.controlToken}`,
+          "Content-Type": "application/json",
+        },
+        body: body === undefined ? null : JSON.stringify(body),
+      });
+      return response.json();
+    };
+    // 模拟短码 on：不带标题
+    await call("POST", "/v1/sessions/session-r/on", { cwd: "/workspace" });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const status = await call("GET", "/v1/status");
+    assert.equal(status.sessions[0]?.title, "重构保活插件");
+    // hook 自带的标题也会更新
+    await call("POST", "/v1/sessions/session-r/activity", { event: "Stop", cwd: "/workspace", title: "hook 标题" });
+    const after = await call("GET", "/v1/status");
+    assert.equal(after.sessions[0]?.title, "hook 标题");
+  } finally {
+    await controller.close();
+    webServer.closeAllConnections();
+    await new Promise<void>((resolve) => webServer.close(() => resolve()));
+    await rm(home, { recursive: true, force: true });
+  }
+});
