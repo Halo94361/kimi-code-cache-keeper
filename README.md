@@ -30,7 +30,7 @@ the request or the reply.
 ## Install
 
 ```text
-/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.1.4/cache-keeper-0.1.4.zip
+/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.2.3/cache-keeper-0.2.3.zip
 /plugins reload
 ```
 
@@ -106,7 +106,7 @@ MIT. Community project, not affiliated with Moonshot AI.
 ### 安装
 
 ```text
-/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.1.4/cache-keeper-0.1.4.zip
+/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.2.3/cache-keeper-0.2.3.zip
 /plugins reload
 ```
 
