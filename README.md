@@ -1,14 +1,17 @@
 # Kimi Code Cache Keeper
 
-Keeps the provider-side prompt cache warm for idle Kimi Code sessions. Each
-keep-alive request runs in a temporary ACP or `kimi web` fork, so the main
-conversation never sees the message or the reply.
+Keeps the provider-side prompt cache warm for idle Kimi Code sessions.
+
+**Keep-alive messages never enter your main conversation.** Each probe runs
+in a temporary ACP or `kimi web` fork, unlike skill-based approaches that
+inject messages into the session. The main conversation keeps no trace of
+the request or the reply.
 
 [中文说明](#中文说明)
 
 ## Features
 
-- No keep-alive prompt or reply in the main session
+- **No keep-alive prompt or reply in the main session**
 - Default: one probe 20 minutes after the last turn; stops after 4 hours idle
 - Controller restarts keep the planned probe time; overdue probes run immediately
 - Per-session on/off, probe now, status, stop all
@@ -78,8 +81,9 @@ MIT. Community project, not affiliated with Moonshot AI.
 
 ## 中文说明
 
-Kimi Code 的 prompt-cache 保活插件：主会话空闲时，在临时 ACP / `kimi web`
-fork 中执行一次最小请求维持缓存前缀，保活消息与回复都不会出现在主会话。
+**保活消息不进入主会话，这是它与 Skill 方案最大的区别。** 主会话空闲时，
+在临时 ACP / `kimi web` fork 中执行一次最小请求维持缓存前缀，prompt 与
+回复都不会写入你的对话记录。
 
 ### 特性
 
