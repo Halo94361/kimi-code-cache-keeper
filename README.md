@@ -45,6 +45,11 @@ From a local checkout: `npm ci && npm run build`, then
 | `/cache-keeper:off` | disable it |
 | `/cache-keeper:status` | countdown, last hit ratio, state |
 
+The same actions are also shipped as Skills, which is the only way to reach
+them from the web UI (`/` there lists built-in commands and Skills, not plugin
+commands): `/skill:cache-keeper:on`, `/skill:cache-keeper:off`,
+`/skill:cache-keeper:status`. Both routes call the same MCP tools.
+
 
 MCP tools: `on`, `off`, `status`. Every tool takes the session's 9-digit
 short code, injected once when the session becomes active. The code
@@ -126,6 +131,10 @@ MIT. Community project, not affiliated with Moonshot AI.
 | `/cache-keeper:on` | 开启当前会话保活 |
 | `/cache-keeper:off` | 关闭 |
 | `/cache-keeper:status` | 查看倒计时、命中率与状态 |
+
+同名的 Skill 提供 web 端入口（web UI 的 `/` 菜单只列内置命令与 Skill，
+不列插件命令）：`/skill:cache-keeper:on`、`/skill:cache-keeper:off`、
+`/skill:cache-keeper:status`。两者调用同一批 MCP 工具，效果一致。
 
 
 MCP 提供 `on`、`off`、`status` 三个工具，均接收本会话的 9 位短码。

@@ -31,6 +31,7 @@
 ```text
 kimi.plugin.json
 commands/             # on / off / status / now
+skills/               # web 端可用的同名入口（/skill:cache-keeper:*）
 src/
   acp-client.ts
   controller.ts
