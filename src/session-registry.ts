@@ -1,3 +1,5 @@
+import type { ProbeLogger } from "./probe-log.js";
+
 export type KeeperSessionStatus = "waiting" | "probing" | "paused" | "disabled" | "expired";
 
 export interface KeeperSession {
@@ -26,6 +28,8 @@ export interface RegistryOptions {
   now?: () => number;
   probe: (session: KeeperSession, signal: AbortSignal) => Promise<ProbeResult>;
   onChange?: () => void;
+  /** 调度与探测生命周期的诊断日志；缺省时静默。 */
+  log?: ProbeLogger;
   setTimer?: typeof setTimeout;
   clearTimer?: typeof clearTimeout;
 }
@@ -44,6 +48,7 @@ export class SessionRegistry {
   private readonly now: () => number;
   private readonly probe: RegistryOptions["probe"];
   private readonly onChange: () => void;
+  private readonly log: ProbeLogger;
   private readonly setTimer: typeof setTimeout;
   private readonly clearTimer: typeof clearTimeout;
 
@@ -53,6 +58,7 @@ export class SessionRegistry {
     this.now = options.now ?? Date.now;
     this.probe = options.probe;
     this.onChange = options.onChange ?? (() => {});
+    this.log = options.log ?? (() => {});
     this.setTimer = options.setTimer ?? setTimeout;
     this.clearTimer = options.clearTimer ?? clearTimeout;
   }
@@ -136,6 +142,10 @@ export class SessionRegistry {
     if (!session?.enabled) return;
     session.busy = false;
     if (title) session.title = title;
+    // 保活失败的 paused 会被这里清掉；不记一笔就无法区分"探测成功"和"失败后重启计时"。
+    if (session.error !== null) {
+      this.log("probe.paused-cleared", { sessionId, error: session.error });
+    }
     session.error = null;
     session.lastTurnEndAt = this.now();
     if (!session.probing) this.schedule(session);
@@ -213,9 +223,11 @@ export class SessionRegistry {
   private async runProbe(session: MutableSession): Promise<void> {
     this.clear(session);
     if (!session.enabled || session.busy || session.probing) return;
-    if (this.now() - session.lastRealActivityAt >= this.maxIdleMs) {
+    const idleMs = this.now() - session.lastRealActivityAt;
+    if (idleMs >= this.maxIdleMs) {
       session.enabled = false;
       session.state = "expired";
+      this.log("probe.expired", { sessionId: session.sessionId, idleMs, maxIdleMs: this.maxIdleMs });
       this.onChange();
       return;
     }
@@ -223,17 +235,34 @@ export class SessionRegistry {
     session.state = "probing";
     const controller = new AbortController();
     session.abort = controller;
+    const startedAt = this.now();
+    this.log("probe.start", { sessionId: session.sessionId, idleMs, intervalMs: this.intervalMs });
     this.onChange();
     try {
       const result = await this.probe(session, controller.signal);
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) {
+        this.log("probe.aborted", { sessionId: session.sessionId, durationMs: this.now() - startedAt });
+        return;
+      }
       session.lastProbeAt = this.now();
       session.hitRatio = result.hitRatio;
       session.error = null;
+      this.log("probe.ok", {
+        sessionId: session.sessionId,
+        durationMs: session.lastProbeAt - startedAt,
+        hitRatio: result.hitRatio,
+      });
     } catch (error) {
       // 主动取消（真实回合开始、off、stop）不算保活失败。
       if (!controller.signal.aborted) {
         session.error = error instanceof Error ? error.message : String(error);
+        this.log("probe.error", {
+          sessionId: session.sessionId,
+          durationMs: this.now() - startedAt,
+          error: session.error,
+        });
+      } else {
+        this.log("probe.aborted", { sessionId: session.sessionId, durationMs: this.now() - startedAt });
       }
     } finally {
       session.probing = false;
@@ -247,6 +276,13 @@ export class SessionRegistry {
       } else {
         session.state = "waiting";
       }
+      // 结算后的调度点是排查"下一次保活为何提前/推迟"的唯一线索。
+      this.log("probe.settled", {
+        sessionId: session.sessionId,
+        state: session.state,
+        nextProbeAt: session.nextProbeAt,
+        busy: session.busy,
+      });
       this.onChange();
     }
   }

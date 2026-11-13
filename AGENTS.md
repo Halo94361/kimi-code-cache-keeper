@@ -35,6 +35,7 @@ src/
   acp-client.ts
   controller.ts
   fork-map.ts
+  probe-log.ts
   session-codes.ts
   session-registry.ts
   scheduler.ts
@@ -51,7 +52,7 @@ dist/                 # 构建产物，不直接提交
 - 禁止提交或打印 API key、OAuth token、cookie、凭据文件、SSH 私钥和 `.env` 内容。
 - 不读取 `~/.kimi-code/credentials/` 或其他凭据存储；ACP 复用 CLI 自身登录状态。仅允许为同实例 Web REST 只读发现 `server.token`、`server/instances/` 元数据和启动日志中的地址与 token，禁止输出、复制、持久化或上传这些凭据。
 - 不把真实会话导出、`wire.jsonl`、私人对话或项目代码提交为测试夹具。夹具必须人工构造并脱敏。
-- 日志与持久化状态不得包含 token、请求正文、回复正文或完整会话内容，只保存开关、session ID、计时和匿名 usage 统计。
+- 日志与持久化状态不得包含 token、请求正文、回复正文或完整会话内容，只保存开关、session ID、计时和匿名 usage 统计。诊断日志统一走 `probe-log.ts` 落 `cache-keeper/probe-log.jsonl`，写入前对 Bearer、`sk-` 密钥和长 hex 做脱敏，并对字段截断。
 - 只能取消或删除控制器自己创建且归属明确的保活 fork；无法确认归属时保留并报告，禁止误删。
 - ACP driver 必须使用创建时登记、删除时校验的所有权白名单：生产保活路径禁止删除原始 session 和未知 session；fork 返回值与父会话相同时立即失败。阶段 0 自建测试父会话的清理也必须单独显式开启，不得默认可用。
 - 真实 ACP 验证使用独立测试会话和隔离的 `KIMI_CODE_HOME`，不得操作用户现有正式会话。

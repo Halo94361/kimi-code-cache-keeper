@@ -68,6 +68,12 @@ token never reaches the model.
 - Session short codes live in `<KIMI_CODE_HOME>/cache-keeper/sessions/`
   (one file per session, 30-day TTL); they contain only the code, session ID,
   cwd and timestamps.
+- Each probe appends one JSONL line per step to
+  `<KIMI_CODE_HOME>/cache-keeper/probe-log.jsonl` (512 KiB, one rotated
+  generation): scheduling points, fork ids, stop reason, token counts and the
+  error summary. Bearer tokens, `sk-…` keys and long hex strings are masked,
+  and only ids, numbers and short summaries are written — never prompts,
+  replies or credentials.
 
 ## Development
 
@@ -139,6 +145,10 @@ MCP 提供 `on`、`off`、`status` 三个工具，均接收本会话的 9 位短
   token 或 API key
 - 会话短码保存在 `<KIMI_CODE_HOME>/cache-keeper/sessions/`（每会话一个文件，
   30 天 TTL），只含短码、session ID、cwd 和时间戳
+- 每次保活按步骤追加一行 JSONL 到
+  `<KIMI_CODE_HOME>/cache-keeper/probe-log.jsonl`（512 KiB，轮转一代）：调度
+  时间点、fork id、stop reason、token 计数和错误摘要。Bearer token、`sk-…`
+  密钥和长 hex 串会被脱敏，只写 id、数字和短摘要，不写请求/回复正文与凭据
 
 ### 开发
 

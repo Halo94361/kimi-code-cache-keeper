@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SessionRegistry, type KeeperSession } from "../src/session-registry.js";
 
-function harness() {
+interface LogEntry {
+  event: string;
+  fields: Record<string, unknown>;
+}
+
+function harness(logs?: LogEntry[]) {
   let time = 0;
   const timers = new Map<number, { callback: () => void; dueAt: number }>();
   let sequence = 0;
@@ -11,6 +16,11 @@ function harness() {
     intervalMs: 100,
     maxIdleMs: 250,
     now: () => time,
+    ...(logs === undefined ? {} : {
+      log: (event: string, fields?: Record<string, unknown>) => {
+        logs.push({ event, fields: fields ?? {} });
+      },
+    }),
     setTimer: ((callback: () => void, delay: number) => {
       const id = ++sequence;
       timers.set(id, { callback, dueAt: time + delay });
@@ -212,4 +222,60 @@ test("hook 与 reconcile 补齐会话标题供面板展示", async () => {
   assert.equal(registry.snapshot()[0]?.title, "改名为重构");
   // 未知会话静默忽略
   registry.setTitle("missing", "x");
+});
+
+test("探测成功记录开始、结果与调度点", async () => {
+  const logs: LogEntry[] = [];
+  const { registry, advance } = harness(logs);
+  registry.enable("a", "/workspace");
+  await advance(100);
+
+  assert.deepEqual(logs.map((entry) => entry.event), ["probe.start", "probe.ok", "probe.settled"]);
+  assert.equal(logs[0]?.fields.sessionId, "a");
+  assert.equal(logs[0]?.fields.idleMs, 100);
+  assert.equal(logs[1]?.fields.hitRatio, 0.9);
+  assert.equal(typeof logs[1]?.fields.durationMs, "number");
+  // 结算点携带下一次调度，用于解释保活间隔为何被推迟
+  assert.equal(logs[2]?.fields.state, "waiting");
+  assert.equal(logs[2]?.fields.nextProbeAt, 200);
+});
+
+test("探测失败与被清除的暂停状态都留痕", async () => {
+  const logs: LogEntry[] = [];
+  const registry = new SessionRegistry({
+    intervalMs: 1,
+    maxIdleMs: 1_000,
+    log: (event: string, fields?: Record<string, unknown>) => {
+      logs.push({ event, fields: fields ?? {} });
+    },
+    probe: async () => {
+      throw new Error("保活失败：mock");
+    },
+  });
+  registry.enable("a", "/workspace");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(registry.snapshot()[0]?.state, "paused");
+  assert.equal(logs.find((entry) => entry.event === "probe.error")?.fields.error, "保活失败：mock");
+  const settled = logs.find((entry) => entry.event === "probe.settled");
+  assert.equal(settled?.fields.state, "paused");
+  assert.equal(settled?.fields.nextProbeAt, null);
+
+  registry.turnEnded("a");
+  assert.equal(registry.snapshot()[0]?.error, null);
+  assert.equal(logs.find((entry) => entry.event === "probe.paused-cleared")?.fields.error, "保活失败：mock");
+});
+
+test("超过最大空闲时间退休时记录原因", async () => {
+  const logs: LogEntry[] = [];
+  const { registry, advance } = harness(logs);
+  registry.enable("a", "/workspace");
+  await advance(100);
+  await advance(100);
+  await advance(100);
+
+  const expired = logs.find((entry) => entry.event === "probe.expired");
+  assert.equal(expired?.fields.sessionId, "a");
+  assert.equal(expired?.fields.maxIdleMs, 250);
+  assert.equal(registry.snapshot()[0]?.state, "expired");
 });

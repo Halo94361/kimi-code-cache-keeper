@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { withKimiAcp } from "./acp-client.js";
 import { ForkMap } from "./fork-map.js";
 import { runKeepaliveOnce } from "./keepalive.js";
+import { ProbeLog, type ProbeLogger } from "./probe-log.js";
 import { SessionCodes, SessionCodeError } from "./session-codes.js";
 import { SessionRegistry, type KeeperSession, type ProbeResult } from "./session-registry.js";
 import { WebClient } from "./web-client.js";
@@ -26,6 +27,8 @@ interface ControllerOptions {
   discoverWeb?: () => Promise<{ baseUrl: string; token: string } | null>;
   /** Web 状态校正周期；默认 30 秒，测试可缩短。 */
   reconcileMs?: number;
+  /** 诊断日志出口；默认写 `<home>/cache-keeper/probe-log.jsonl`，测试可注入。 */
+  log?: ProbeLogger;
 }
 
 interface Discovery {
@@ -71,6 +74,8 @@ export async function startController(options: ControllerOptions): Promise<{ por
   const forkMap = new ForkMap(home);
   // 旧控制器留下的 fork 已不存在，启动时清空残留映射
   await forkMap.clear();
+  const probeLog = new ProbeLog(home);
+  const log: ProbeLogger = options.log ?? probeLog.record;
   const codes = new SessionCodes(home);
   await codes.prune().catch(() => undefined);
   const pruneTimer = setInterval(() => {
@@ -86,6 +91,7 @@ export async function startController(options: ControllerOptions): Promise<{ por
   const registry = new SessionRegistry({
     intervalMs: options.intervalMs ?? 20 * 60_000,
     maxIdleMs: options.maxIdleMs ?? 4 * 60 * 60_000,
+    log,
     probe: options.probe ?? (async (session, signal) => {
       if (web) {
         const client = new WebClient(web);
@@ -93,6 +99,7 @@ export async function startController(options: ControllerOptions): Promise<{ por
           parentSessionId: session.sessionId,
           diagnosticsHome: home,
           forkMap,
+          log,
           signal,
         });
         if (report.status !== "ok") throw new Error(report.error ?? "保活失败");
@@ -146,8 +153,15 @@ export async function startController(options: ControllerOptions): Promise<{ por
             registry.setTitle(session.sessionId, info.title);
           }
           if (info.busy && !session.busy) {
+            log("reconcile.turn-started", { sessionId: session.sessionId });
             registry.turnStarted(session.sessionId);
           } else if (!info.busy && (session.busy || session.nextProbeAt === null)) {
+            // 这一支会重排下一次保活时间，且可能清掉 paused 的错误，必须留痕
+            log("reconcile.turn-ended", {
+              sessionId: session.sessionId,
+              wasBusy: session.busy,
+              nextProbeAt: session.nextProbeAt,
+            });
             registry.turnEnded(session.sessionId);
           }
         } catch {
@@ -289,8 +303,19 @@ export async function startController(options: ControllerOptions): Promise<{ por
   };
   await atomicJson(discoveryPath, discovery);
   console.log(JSON.stringify({ status: "listening", port: address.port }));
+  // 控制器重启会重置计时；记下启动时刻才能解释相邻两次保活的间隔变化。
+  log("controller.start", {
+    pid: process.pid,
+    version: typeof __VERSION__ === "string" ? __VERSION__ : "0.0.0-dev",
+    port: address.port,
+    intervalMs: options.intervalMs ?? 20 * 60_000,
+    maxIdleMs: options.maxIdleMs ?? 4 * 60 * 60_000,
+    web: web !== null,
+    sessions: registry.snapshot().filter((session) => session.enabled).length,
+  });
 
   const close = async () => {
+    log("controller.stop", { pid: process.pid });
     clearInterval(pruneTimer);
     clearInterval(reconcileTimer);
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
