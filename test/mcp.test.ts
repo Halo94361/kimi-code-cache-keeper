@@ -28,7 +28,7 @@ test("MCP 工具使用会话短码，缺少短码直接拒绝", async () => {
   });
   try {
     const code = await new SessionCodes(home, { random: () => 1375 })
-      .injectOnPrompt("a", "/workspace", new Date());
+      .injectOnPrompt("a", "/workspace", new Date(2026, 10, 12));
     assert.equal(code, "111213757");
     const call = (id: number, name: string, args: Record<string, unknown>) => handleMcp({
       jsonrpc: "2.0",

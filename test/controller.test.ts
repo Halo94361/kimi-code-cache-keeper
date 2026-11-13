@@ -117,7 +117,7 @@ test("短码接口精确开启并查询单个会话", async () => {
   });
   try {
     const code = await new SessionCodes(home, { random: () => 1375 })
-      .injectOnPrompt("session-code", "/workspace", new Date());
+      .injectOnPrompt("session-code", "/workspace", new Date(2026, 10, 12));
     assert.equal(code, "111213757");
     const discovery = JSON.parse(await readFile(join(home, "cache-keeper", "controller.json"), "utf8"));
     const base = `http://127.0.0.1:${controller.port}`;
@@ -145,7 +145,7 @@ test("短码接口精确开启并查询单个会话", async () => {
 
     const invalid = await call("POST", "/v1/code/on", { code: "111213758" });
     assert.equal(invalid.status, "error");
-    const unknown = await call("POST", "/v1/code/on", { code: makeCode(new Date(), () => 1111) });
+    const unknown = await call("POST", "/v1/code/on", { code: makeCode(new Date(2026, 10, 12), () => 1111) });
     assert.equal(unknown.status, "error");
 
     await call("POST", "/v1/code/off", { code });
