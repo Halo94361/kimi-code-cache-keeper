@@ -25,7 +25,11 @@ jobs:
           rm -rf .release
           mkdir -p .release/staging
           cp kimi.plugin.json package.json README.md AGENTS.md LICENSE .release/staging/
-          cp -r commands dist .release/staging/
+          cp -r commands skills dist .release/staging/
+          # manifest 声明的每个 ./ 目录都必须进包，否则安装后 Skills 会报诊断错误
+          for path in $(node -p 'const m=require("./kimi.plugin.json");[m.skills??[],m.commands??[]].flat().join("\n")'); do
+            test -e ".release/staging/${path#./}" || { echo "缺少 manifest 声明的目录：$path"; exit 1; }
+          done
           cd .release/staging
           zip -r "../cache-keeper-${GITHUB_REF_NAME#v}.zip" .
       - name: Publish release archive
