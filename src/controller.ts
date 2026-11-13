@@ -103,7 +103,7 @@ export async function startController(options: ControllerOptions): Promise<{ por
           signal,
         });
         if (report.status !== "ok") throw new Error(report.error ?? "保活失败");
-        return { hitRatio: report.diagnostics?.usage.cacheHitRatio ?? null };
+        return { hitRatio: report.ownUsage?.cacheHitRatio ?? null };
       }
       const report = await withKimiAcp({ home }, (driver) => runKeepaliveOnce(driver, {
         parentSessionId: session.sessionId,
@@ -113,7 +113,7 @@ export async function startController(options: ControllerOptions): Promise<{ por
         signal,
       }));
       if (report.status !== "ok") throw new Error(report.error ?? "保活失败");
-      return { hitRatio: report.diagnostics?.usage.cacheHitRatio ?? null };
+      return { hitRatio: report.ownUsage?.cacheHitRatio ?? null };
     }),
     onChange: () => {
       saveQueue = saveQueue.then(async () => {

@@ -1,4 +1,4 @@
-import { readSessionDiagnostics, type SessionDiagnostics } from "./diagnostics.js";
+import { ownUsageDiagnostics, readSessionDiagnostics, type SessionDiagnostics, type UsageDiagnostic } from "./diagnostics.js";
 import type { ForkMap } from "./fork-map.js";
 import type { ProbeDriver, PromptResult } from "./probe.js";
 import { assertSessionLifecycleCapabilities, errorMessage } from "./safety.js";
@@ -18,12 +18,14 @@ export interface KeepaliveReport {
   forkSessionId: string | null;
   forkPrompt: PromptResult | null;
   diagnostics: SessionDiagnostics | null;
+  /** 这次保活自身的用量（已剔除 fork 继承的父会话历史）；缺失时为 null。 */
+  ownUsage: UsageDiagnostic | null;
   prefixHashesMatch: boolean | null;
   deletedSessionIds: string[];
   error: string | null;
 }
 
-const KEEPALIVE_PROMPT = "这是一次缓存保活请求。请只回复“1”，不要调用任何工具。";
+const KEEPALIVE_PROMPT = "不要思考，不要调用工具，只回复“1”。";
 
 export async function runKeepaliveOnce(
   driver: ProbeDriver,
@@ -35,6 +37,7 @@ export async function runKeepaliveOnce(
     forkSessionId: null,
     forkPrompt: null,
     diagnostics: null,
+    ownUsage: null,
     prefixHashesMatch: null,
     deletedSessionIds: [],
     error: null,
@@ -69,6 +72,7 @@ export async function runKeepaliveOnce(
         readSessionDiagnostics(options.diagnosticsHome, fork.sessionId),
       ]);
       report.diagnostics = forkDiagnostics;
+      report.ownUsage = ownUsageDiagnostics(parentDiagnostics, forkDiagnostics);
       const parentRequest = parentDiagnostics.requests.at(-1);
       const forkRequest = forkDiagnostics.requests.at(-1);
       if (parentRequest && forkRequest) {

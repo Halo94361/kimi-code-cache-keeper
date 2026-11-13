@@ -7,6 +7,9 @@ export interface PromptResult {
   stopReason: acp.StopReason;
   usage: UsageSummary | null;
   unsafeToolActivity: boolean;
+  /** Web 路径才有：turn 结束的原始 reason 与收敛它的事件，用于诊断 cancelled 的真伪。 */
+  endReason?: string | null;
+  settledBy?: "turn.ended" | "work_changed" | null;
 }
 
 export interface SessionDescriptor {

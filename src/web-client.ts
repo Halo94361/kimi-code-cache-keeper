@@ -44,11 +44,13 @@ export class WebClient {
   }
 
   /** 读取会话真实忙碌状态与标题；标题用于面板展示，忙碌状态用于校正漏掉的 TurnStarted/Stop hook。 */
-  async sessionInfo(sessionId: string): Promise<{ busy: boolean; title: string | null }> {
+  async sessionInfo(sessionId: string): Promise<{ busy: boolean; title: string | null; lastTurnReason: string | null }> {
     const data = await this.request("GET", `/api/v1/sessions/${sessionId}`);
     return {
       busy: data?.busy === true || data?.main_turn_active === true,
       title: typeof data?.title === "string" && data.title.length > 0 ? data.title : null,
+      // 回合结束的真实原因：WS 事件可能缺失或字段不同，用会话详情交叉校验 cancelled
+      lastTurnReason: typeof data?.last_turn_reason === "string" ? data.last_turn_reason : null,
     };
   }
 
@@ -90,6 +92,8 @@ export class WebClient {
     }));
     let unsafeToolActivity = false;
     let promptId: string | null = null;
+    let endReason: string | null = null;
+    let settledBy: PromptResult["settledBy"] = null;
     try {
       const stopReason = await new Promise<PromptResult["stopReason"]>((resolveTurn, rejectTurn) => {
         let timer: NodeJS.Timeout | undefined;
@@ -139,10 +143,19 @@ export class WebClient {
             const reason = frame["reason"]
               ?? (frame["turn"] as Record<string, any> | undefined)?.["reason"]
               ?? payload?.["reason"];
-            settle(() => resolveTurn(reason === "completed" ? "end_turn" : "cancelled"));
+            settle(() => {
+              endReason = typeof reason === "string" ? reason : null;
+              settledBy = "turn.ended";
+              resolveTurn(reason === "completed" ? "end_turn" : "cancelled");
+            });
           }
           if (type === "event.session.work_changed" && payload?.["main_turn_active"] === false) {
-            settle(() => resolveTurn(payload["last_turn_reason"] === "completed" ? "end_turn" : "cancelled"));
+            const reason = payload["last_turn_reason"];
+            settle(() => {
+              endReason = typeof reason === "string" ? reason : null;
+              settledBy = "work_changed";
+              resolveTurn(reason === "completed" ? "end_turn" : "cancelled");
+            });
           }
         };
         void this.request("POST", `/api/v1/sessions/${sessionId}/prompts`, {
@@ -155,7 +168,7 @@ export class WebClient {
           settle(() => rejectTurn(error instanceof Error ? error : new Error(String(error))));
         });
       });
-      return { stopReason, usage: null, unsafeToolActivity };
+      return { stopReason, usage: null, unsafeToolActivity, endReason, settledBy };
     } finally {
       ws.close();
     }

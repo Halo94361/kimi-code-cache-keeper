@@ -43,6 +43,29 @@ function usageDiagnostic(inputOther: number, inputCacheRead: number, inputCacheC
   };
 }
 
+/** 汇总多条 usage 记录：把 fork 自有记录从继承的历史里剥离出来时用。 */
+export function sumUsageRecords(records: UsageDiagnostic[]): UsageDiagnostic {
+  let inputOther = 0;
+  let inputCacheRead = 0;
+  let inputCacheCreation = 0;
+  let output = 0;
+  for (const record of records) {
+    inputOther += record.inputOther;
+    inputCacheRead += record.inputCacheRead;
+    inputCacheCreation += record.inputCacheCreation;
+    output += record.output;
+  }
+  return usageDiagnostic(inputOther, inputCacheRead, inputCacheCreation, output);
+}
+
+/**
+ * fork 自有用量：fork 的 wire 复制了父会话全部记录，只有超出父会话条数的部分
+ * 才是这次保活的开销。没有自有记录时返回零值，命中率为 null（未知，而不是 0）。
+ */
+export function ownUsageDiagnostics(parent: SessionDiagnostics, fork: SessionDiagnostics): UsageDiagnostic {
+  return sumUsageRecords(fork.usageRecords.slice(parent.usageRecords.length));
+}
+
 export function parseWireDiagnostics(text: string): SessionDiagnostics {
   const requests: RequestDiagnostic[] = [];
   const usageRecords: UsageDiagnostic[] = [];
