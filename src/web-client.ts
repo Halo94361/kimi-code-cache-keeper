@@ -75,6 +75,14 @@ export class WebClient {
       ws.onopen = () => resolveOpen();
       ws.onerror = () => rejectOpen(new Error("WebSocket 连接失败"));
     });
+    // 新版 Kimi Web 用 subscribe（session_id + agent_ids）投递 turn/item 事件，
+    // 旧版用 subscribe_v2。服务端会忽略不认识的消息类型，两种都发以兼容两个版本。
+    ws.send(JSON.stringify({
+      type: "subscribe",
+      request_id: "1",
+      session_id: sessionId,
+      agent_ids: ["main"],
+    }));
     ws.send(JSON.stringify({
       type: "subscribe_v2",
       id: "1",
@@ -83,12 +91,6 @@ export class WebClient {
     let unsafeToolActivity = false;
     let promptId: string | null = null;
     try {
-      const accepted = await this.request("POST", `/api/v1/sessions/${sessionId}/prompts`, {
-        permission_mode: "manual",
-        content: [{ type: "text", text }],
-      }, signal);
-      promptId = accepted.prompt_id;
-      signal?.throwIfAborted();
       const stopReason = await new Promise<PromptResult["stopReason"]>((resolveTurn, rejectTurn) => {
         let timer: NodeJS.Timeout | undefined;
         let settled = false;
@@ -109,19 +111,49 @@ export class WebClient {
         };
         signal?.addEventListener("abort", onAbort, { once: true });
         timer = setTimeout(() => settle(() => rejectTurn(new Error("等待保活 turn 结束超时"))), 120_000);
+        // 先挂监听再发 prompt，避免 turn 结束过快时事件在 POST 返回前丢失。
         ws.onmessage = (event) => {
-          const frame = JSON.parse(String(event.data));
-          if (frame.type.startsWith("tool.call")) {
+          let frame: Record<string, any>;
+          try {
+            frame = JSON.parse(String(event.data)) as Record<string, any>;
+          } catch {
+            return;
+          }
+          const payload = frame["payload"] as Record<string, any> | undefined;
+          const frameSession = frame["session_id"] ?? payload?.["session_id"];
+          if (typeof frameSession === "string" && frameSession !== sessionId) return;
+          const type = typeof frame["type"] === "string" ? frame["type"] : "";
+          // 新版协议用 item.started/ended 的 toolUse 项表示工具调用，
+          // 权限请求体现在 pending_interaction；命中任一情况都取消保活。
+          const item = frame["item"] as Record<string, any> | undefined;
+          const pending = payload?.["pending_interaction"];
+          if (
+            type.startsWith("tool.call") ||
+            (item !== undefined && (item["type"] === "toolUse" || item["type"] === "tool_call")) ||
+            (typeof pending === "string" && pending !== "none")
+          ) {
             unsafeToolActivity = true;
             void this.abort(sessionId, promptId).catch(() => {});
           }
-          if (frame.type === "turn.ended") {
-            settle(() => resolveTurn(frame.reason === "completed" ? "end_turn" : "cancelled"));
+          if (type === "turn.ended") {
+            const reason = frame["reason"]
+              ?? (frame["turn"] as Record<string, any> | undefined)?.["reason"]
+              ?? payload?.["reason"];
+            settle(() => resolveTurn(reason === "completed" ? "end_turn" : "cancelled"));
           }
-          if (frame.type === "event.session.work_changed" && frame.payload?.main_turn_active === false) {
-            settle(() => resolveTurn(frame.payload.last_turn_reason === "completed" ? "end_turn" : "cancelled"));
+          if (type === "event.session.work_changed" && payload?.["main_turn_active"] === false) {
+            settle(() => resolveTurn(payload["last_turn_reason"] === "completed" ? "end_turn" : "cancelled"));
           }
         };
+        void this.request("POST", `/api/v1/sessions/${sessionId}/prompts`, {
+          permission_mode: "manual",
+          content: [{ type: "text", text }],
+        }, signal).then((accepted) => {
+          promptId = accepted.prompt_id;
+          if (signal?.aborted) void this.abort(sessionId, promptId).catch(() => undefined);
+        }).catch((error: unknown) => {
+          settle(() => rejectTurn(error instanceof Error ? error : new Error(String(error))));
+        });
       });
       return { stopReason, usage: null, unsafeToolActivity };
     } finally {
