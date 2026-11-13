@@ -15,7 +15,7 @@
 - 通过 MCP 提供 `on` / `off` / `status` 薄封装，全部以本会话 9 位短码 `code` 为唯一定位参数；不向模型暴露 `now` / `stop`，也不接受 `sessionId` 或按 cwd/busy 推断。slash commands 直接指示模型调用对应工具，控制 token 不得暴露给模型。
 - `UserPromptSubmit` 只在会话首次激活、`SessionStart` 恢复或 `PreCompact`/`PostCompact` 后补发时注入短码；其余提交输出空字符串。短码文件是会话身份的唯一映射，控制器只按码精确解析，禁止跨会话猜测。会话结束不删除短码，压缩/重载/恢复后仍是同一码，回收只靠 30 天 TTL。
 - 控制器是独立的 Node.js 进程，每个 `KIMI_CODE_HOME` 最多一个实例，不依赖 Web 会话常驻内存。
-- 控制器每 30 秒通过同实例 Web 的 session busy 状态校正 `TurnStarted`/`Stop` 漏送；纯 CLI 无 Web 时仅依赖活动 hook。
+- 控制器每 30 秒通过同实例 Web 的 session busy 状态校正 `TurnStarted`/`Stop` 漏送；Web 晚于控制器启动或重启换端口时重新发现端点；纯 CLI 无 Web 时仅依赖活动 hook。
 - 插件 commands 和 hooks 保持薄入口，会话状态机、ACP 通信和安全策略放在可测试的核心模块中。
 
 ## 技术栈与结构

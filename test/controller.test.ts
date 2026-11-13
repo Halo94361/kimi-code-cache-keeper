@@ -208,3 +208,131 @@ test("reconcile 用 Web 会话标题补齐面板显示", async () => {
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("Web 晚于控制器启动时 reconcile 重新发现端点并补上漏掉的 Stop", async () => {
+  const home = await mkdtemp(join(tmpdir(), "cache-keeper-late-web-"));
+  const webServer = createServer((request, response) => {
+    response.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
+    if (request.url?.endsWith("/healthz")) {
+      response.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+    response.end(JSON.stringify({
+      code: 0,
+      msg: "success",
+      data: { busy: false, main_turn_active: false },
+    }));
+  });
+  await new Promise<void>((resolve) => webServer.listen(0, "127.0.0.1", resolve));
+  const address = webServer.address();
+  if (address === null || typeof address === "string") throw new Error("mock web 监听失败");
+  let webReady = false;
+  const controller = await startController({
+    home,
+    intervalMs: 10_000,
+    reconcileMs: 10,
+    discoverWeb: async () => (webReady
+      ? { baseUrl: `http://127.0.0.1:${address.port}`, token: "test" }
+      : null),
+    probe: async () => ({ hitRatio: 0.9 }),
+  });
+  try {
+    const discovery = JSON.parse(await readFile(join(home, "cache-keeper", "controller.json"), "utf8"));
+    const base = `http://127.0.0.1:${controller.port}`;
+    const call = async (method: string, path: string, body?: unknown) => {
+      const response = await fetch(`${base}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${discovery.controlToken}`,
+          "Content-Type": "application/json",
+        },
+        body: body === undefined ? null : JSON.stringify(body),
+      });
+      return response.json();
+    };
+
+    await call("POST", "/v1/sessions/session-late/on", { cwd: "/workspace" });
+    await call("POST", "/v1/sessions/session-late/activity", { event: "TurnStarted", cwd: "/workspace" });
+    const before = await call("GET", "/v1/status");
+    assert.equal(before.sessions[0]?.busy, true);
+    assert.equal(before.sessions[0]?.nextProbeAt, null);
+
+    webReady = true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const after = await call("GET", "/v1/status");
+    assert.equal(after.sessions[0]?.busy, false);
+    assert.notEqual(after.sessions[0]?.nextProbeAt, null);
+  } finally {
+    await controller.close();
+    webServer.closeAllConnections();
+    await new Promise<void>((resolve) => webServer.close(() => resolve()));
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Web 重启换端口后 reconcile 丢弃失效端点并重新发现", async () => {
+  const home = await mkdtemp(join(tmpdir(), "cache-keeper-restart-web-"));
+  const deadServer = createServer();
+  await new Promise<void>((resolve) => deadServer.listen(0, "127.0.0.1", resolve));
+  const deadAddress = deadServer.address();
+  if (deadAddress === null || typeof deadAddress === "string") throw new Error("端口分配失败");
+  await new Promise<void>((resolve) => deadServer.close(() => resolve()));
+
+  const liveServer = createServer((request, response) => {
+    response.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
+    if (request.url?.endsWith("/healthz")) {
+      response.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+    response.end(JSON.stringify({
+      code: 0,
+      msg: "success",
+      data: { busy: false, main_turn_active: false },
+    }));
+  });
+  await new Promise<void>((resolve) => liveServer.listen(0, "127.0.0.1", resolve));
+  const liveAddress = liveServer.address();
+  if (liveAddress === null || typeof liveAddress === "string") throw new Error("mock web 监听失败");
+
+  let discoveries = 0;
+  const controller = await startController({
+    home,
+    intervalMs: 10_000,
+    reconcileMs: 10,
+    discoverWeb: async () => {
+      discoveries += 1;
+      return discoveries === 1
+        ? { baseUrl: `http://127.0.0.1:${deadAddress.port}`, token: "test" }
+        : { baseUrl: `http://127.0.0.1:${liveAddress.port}`, token: "test" };
+    },
+    probe: async () => ({ hitRatio: 0.9 }),
+  });
+  try {
+    const discovery = JSON.parse(await readFile(join(home, "cache-keeper", "controller.json"), "utf8"));
+    const base = `http://127.0.0.1:${controller.port}`;
+    const call = async (method: string, path: string, body?: unknown) => {
+      const response = await fetch(`${base}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${discovery.controlToken}`,
+          "Content-Type": "application/json",
+        },
+        body: body === undefined ? null : JSON.stringify(body),
+      });
+      return response.json();
+    };
+
+    await call("POST", "/v1/sessions/session-restart/on", { cwd: "/workspace" });
+    await call("POST", "/v1/sessions/session-restart/activity", { event: "TurnStarted", cwd: "/workspace" });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const status = await call("GET", "/v1/status");
+    assert.equal(discoveries > 1, true);
+    assert.equal(status.sessions[0]?.busy, false);
+    assert.notEqual(status.sessions[0]?.nextProbeAt, null);
+  } finally {
+    await controller.close();
+    liveServer.closeAllConnections();
+    await new Promise<void>((resolve) => liveServer.close(() => resolve()));
+    await rm(home, { recursive: true, force: true });
+  }
+});

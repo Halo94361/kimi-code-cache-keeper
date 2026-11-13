@@ -22,6 +22,8 @@ interface ControllerOptions {
     baseUrl: string;
     token: string;
   };
+  /** Web 端点发现入口；默认读取同实例实例文件与 token，测试可注入。 */
+  discoverWeb?: () => Promise<{ baseUrl: string; token: string } | null>;
   /** Web 状态校正周期；默认 30 秒，测试可缩短。 */
   reconcileMs?: number;
 }
@@ -75,10 +77,11 @@ export async function startController(options: ControllerOptions): Promise<{ por
     void codes.prune().catch(() => undefined);
   }, 60 * 60_000);
   pruneTimer.unref();
-  const discovered = options.probe === undefined && !options.web
-    ? await discoverWebRuntime(home).catch(() => null)
-    : null;
-  const web = options.web ?? discovered;
+  // Web 端点不是一次性快照：kimi web 可能在控制器之后才启动，或重启后换端口。
+  // 保留发现入口，端点缺失或失联时由 reconcile 重新发现，避免 busy 校正永久失效。
+  const pinnedWeb = options.web !== undefined;
+  const discoverWeb = options.discoverWeb ?? (() => discoverWebRuntime(home));
+  let web = options.web ?? await discoverWeb().catch(() => null);
   let saveQueue = Promise.resolve();
   const registry = new SessionRegistry({
     intervalMs: options.intervalMs ?? 20 * 60_000,
@@ -123,14 +126,22 @@ export async function startController(options: ControllerOptions): Promise<{ por
   const reconcileMs = options.reconcileMs ?? 30_000;
   let reconciling = false;
   const reconcile = async (): Promise<void> => {
-    if (web === null || reconciling) return;
+    if (reconciling) return;
     reconciling = true;
     try {
+      if (!pinnedWeb && web === null) {
+        web = await discoverWeb().catch(() => null);
+      }
+      if (web === null) return;
       const client = new WebClient(web);
+      let attempted = 0;
+      let responded = 0;
       for (const session of registry.snapshot()) {
         if (!session.enabled || session.state === "probing") continue;
+        attempted += 1;
         try {
           const info = await client.sessionInfo(session.sessionId);
+          responded += 1;
           if (info.title !== null && info.title !== session.title) {
             registry.setTitle(session.sessionId, info.title);
           }
@@ -142,6 +153,11 @@ export async function startController(options: ControllerOptions): Promise<{ por
         } catch {
           // 单个会话查询失败不影响其它会话，下一轮重试
         }
+      }
+      // 整轮查询全部失败且端点健康检查不通，说明 Web 实例已退出或换端口；
+      // 清空端点让下一轮重新发现，而不是继续对着失效地址重试。
+      if (!pinnedWeb && attempted > 0 && responded === 0 && !(await client.healthy())) {
+        web = null;
       }
     } finally {
       reconciling = false;

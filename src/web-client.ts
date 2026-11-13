@@ -56,6 +56,16 @@ export class WebClient {
     return (await this.sessionInfo(sessionId)).busy;
   }
 
+  /** 端点健康检查；Web 重启后端口会变，据此判断是否应丢弃当前地址并重新发现。 */
+  async healthy(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/v1/healthz`, { signal: AbortSignal.timeout(2_000) });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
   async prompt(sessionId: string, text: string, signal?: AbortSignal): Promise<PromptResult> {
     signal?.throwIfAborted();
     const ws = new WebSocket(`${this.baseUrl.replace(/^http/, "ws")}/api/v1/ws`, [
