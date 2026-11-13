@@ -2,6 +2,13 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { controllerCodeCommand, controllerCodeStatus } from "./hooks/control.js";
 
+/**
+ * 版本号由构建脚本从 package.json 注入为 __VERSION__；直接跑 TS 源码
+ * （测试、开发）时没有注入，回退到占位值。
+ */
+const packageVersion = (): string =>
+  typeof __VERSION__ === "string" ? __VERSION__ : "0.0.0-dev";
+
 const CODE_SCHEMA = {
   type: "object",
   properties: {
@@ -56,7 +63,7 @@ export async function handleMcp(request: JsonRpcRequest, home: string): Promise<
     return result(id, {
       protocolVersion: "2024-11-05",
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "cache-keeper", version: "0.2.5" },
+      serverInfo: { name: "cache-keeper", version: packageVersion() },
     });
   }
   if (method === "ping") return result(id, {});
