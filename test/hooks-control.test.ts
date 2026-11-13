@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { resolveControllerScript } from "../src/hooks/control.js";
+import { resolveControllerScript, resolveNodeRuntime } from "../src/hooks/control.js";
 
 async function withLayout(run: (home: string) => Promise<void>): Promise<void> {
   const home = await mkdtemp(join(tmpdir(), "cache-keeper-ctrlpath-"));
@@ -47,4 +47,14 @@ test("两种布局都不存在时回退上一级候选，保持旧行为", async
     const resolved = resolveControllerScript(pathToFileURL(join(hooks, "control.js")).href);
     assert.equal(resolved, join(home, "dist", "controller.js"));
   });
+});
+
+test("node 运行时可执行时直接复用", () => {
+  assert.equal(resolveNodeRuntime("/usr/local/bin/node"), "/usr/local/bin/node");
+  assert.equal(resolveNodeRuntime("C:\\Program Files\\nodejs\\node.exe"), "C:\\Program Files\\nodejs\\node.exe");
+});
+
+test("托管在客户端二进制里时回退到 PATH 中的 node", () => {
+  assert.equal(resolveNodeRuntime("/home/user/.kimi-code/bin/kimi"), "node");
+  assert.equal(resolveNodeRuntime("/usr/bin/nodejs"), "node");
 });

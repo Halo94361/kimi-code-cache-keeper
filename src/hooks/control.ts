@@ -46,12 +46,21 @@ export function resolveControllerScript(metaUrl: string): string {
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[1]!;
 }
 
+/**
+ * 拉起控制器用的 node：部分客户端把插件 MCP 托管在自身二进制进程里，
+ * process.execPath 指向 kimi 而非 node，直接拿来执行脚本会报 unknown command，
+ * 这种情形回退到 PATH 中的 node。
+ */
+export function resolveNodeRuntime(execPath: string = process.execPath): string {
+  return /(^|[\\/])node(\.exe)?$/i.test(execPath) ? execPath : "node";
+}
+
 async function ensureController(home: string): Promise<Discovery> {
   let discovery = await readDiscovery(home);
   if (discovery && await reachable(discovery)) return discovery;
 
   const controllerPath = resolveControllerScript(import.meta.url);
-  spawn(process.execPath, [controllerPath, "--home", home], {
+  spawn(resolveNodeRuntime(), [controllerPath, "--home", home], {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
