@@ -7,6 +7,8 @@ on:
 
 jobs:
   check:
+    # Gitea 也会读 .github/，但这里的 ubuntu-latest 在自建 host runner 上永远排队
+    if: ${{ !contains(github.server_url, 'gitea') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
