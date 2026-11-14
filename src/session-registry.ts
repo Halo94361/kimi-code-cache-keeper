@@ -14,6 +14,8 @@ export interface KeeperSession {
   lastRealActivityAt: number;
   /** 最后一轮对话结束时间；控制器重启后据此恢复空闲计时。旧状态文件可能缺失。 */
   lastTurnEndAt?: number | null;
+  /** 已成功的保活次数，用于 maxProbes 预算；旧状态文件可能缺失。 */
+  probeCount?: number;
   hitRatio: number | null;
   error: string | null;
 }
@@ -25,6 +27,8 @@ export interface ProbeResult {
 export interface RegistryOptions {
   intervalMs: number;
   maxIdleMs: number;
+  /** 每个会话最多保活多少次；null 表示不限。 */
+  maxProbes?: number | null;
   now?: () => number;
   probe: (session: KeeperSession, signal: AbortSignal) => Promise<ProbeResult>;
   onChange?: () => void;
@@ -45,6 +49,7 @@ export class SessionRegistry {
   private readonly sessions = new Map<string, MutableSession>();
   private readonly intervalMs: number;
   private readonly maxIdleMs: number;
+  private readonly maxProbes: number | null;
   private readonly now: () => number;
   private readonly probe: RegistryOptions["probe"];
   private readonly onChange: () => void;
@@ -55,6 +60,7 @@ export class SessionRegistry {
   constructor(options: RegistryOptions) {
     this.intervalMs = options.intervalMs;
     this.maxIdleMs = options.maxIdleMs;
+    this.maxProbes = options.maxProbes ?? null;
     this.now = options.now ?? Date.now;
     this.probe = options.probe;
     this.onChange = options.onChange ?? (() => {});
@@ -74,6 +80,8 @@ export class SessionRegistry {
       existing.title = title ?? existing.title;
       existing.lastRealActivityAt = this.now();
       existing.error = null;
+      // 重新开启视为新一轮预算，计数清零
+      existing.probeCount = 0;
       existing.state = "waiting";
       this.schedule(existing);
     } else {
@@ -88,6 +96,7 @@ export class SessionRegistry {
         lastProbeAt: null,
         lastRealActivityAt: this.now(),
         lastTurnEndAt: null,
+        probeCount: 0,
         hitRatio: null,
         error: null,
         probing: false,
@@ -247,11 +256,23 @@ export class SessionRegistry {
       session.lastProbeAt = this.now();
       session.hitRatio = result.hitRatio;
       session.error = null;
+      session.probeCount = (session.probeCount ?? 0) + 1;
       this.log("probe.ok", {
         sessionId: session.sessionId,
         durationMs: session.lastProbeAt - startedAt,
         hitRatio: result.hitRatio,
+        probeCount: session.probeCount,
       });
+      if (this.maxProbes !== null && session.probeCount >= this.maxProbes) {
+        // 预算用完即自动停止，避免无人值守时无限保活
+        session.enabled = false;
+        session.state = "disabled";
+        this.log("probe.budget-exhausted", {
+          sessionId: session.sessionId,
+          probeCount: session.probeCount,
+          maxProbes: this.maxProbes,
+        });
+      }
     } catch (error) {
       // 主动取消（真实回合开始、off、stop）不算保活失败。
       if (!controller.signal.aborted) {

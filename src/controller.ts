@@ -10,6 +10,7 @@ import { runKeepaliveOnce } from "./keepalive.js";
 import { ProbeLog, type ProbeLogger } from "./probe-log.js";
 import { SessionCodes, SessionCodeError } from "./session-codes.js";
 import { SessionRegistry, type KeeperSession, type ProbeResult } from "./session-registry.js";
+import { loadSettings } from "./settings.js";
 import { WebClient } from "./web-client.js";
 import { runWebKeepaliveOnce } from "./web-keepalive.js";
 import { discoverWebRuntime } from "./web-discovery.js";
@@ -18,6 +19,8 @@ interface ControllerOptions {
   home: string;
   intervalMs?: number;
   maxIdleMs?: number;
+  /** 每个会话最多保活多少次；null 表示不限。 */
+  maxProbes?: number | null;
   probe?: (session: KeeperSession, signal: AbortSignal) => Promise<ProbeResult>;
   web?: {
     baseUrl: string;
@@ -76,6 +79,11 @@ export async function startController(options: ControllerOptions): Promise<{ por
   await forkMap.clear();
   const probeLog = new ProbeLog(home);
   const log: ProbeLogger = options.log ?? probeLog.record;
+  // settings.json 是最容易改的一层（临时实验用），env 与调用参数优先于它
+  const settings = await loadSettings(home);
+  const intervalMs = options.intervalMs ?? settings.intervalMs ?? 20 * 60_000;
+  const maxIdleMs = options.maxIdleMs ?? settings.maxIdleMs ?? 4 * 60 * 60_000;
+  const maxProbes = options.maxProbes ?? settings.maxProbes ?? null;
   const codes = new SessionCodes(home);
   await codes.prune().catch(() => undefined);
   const pruneTimer = setInterval(() => {
@@ -89,8 +97,9 @@ export async function startController(options: ControllerOptions): Promise<{ por
   let web = options.web ?? await discoverWeb().catch(() => null);
   let saveQueue = Promise.resolve();
   const registry = new SessionRegistry({
-    intervalMs: options.intervalMs ?? 20 * 60_000,
-    maxIdleMs: options.maxIdleMs ?? 4 * 60 * 60_000,
+    intervalMs,
+    maxIdleMs,
+    maxProbes,
     log,
     probe: options.probe ?? (async (session, signal) => {
       if (web) {
@@ -155,8 +164,13 @@ export async function startController(options: ControllerOptions): Promise<{ por
           if (info.busy && !session.busy) {
             log("reconcile.turn-started", { sessionId: session.sessionId });
             registry.turnStarted(session.sessionId);
-          } else if (!info.busy && (session.busy || session.nextProbeAt === null)) {
-            // 这一支会重排下一次保活时间，且可能清掉 paused 的错误，必须留痕
+          } else if (
+            !info.busy
+            // paused 只能由真实活动解除：保活失败后 nextProbeAt 必然为 null，
+            // 若在这里一并结算，30 秒后就会清掉错误并静默重排，失败被面板抹掉。
+            && (session.busy || (session.nextProbeAt === null && session.state !== "paused"))
+          ) {
+            // 这一支会重排下一次保活时间，必须留痕以便解释调度变化
             log("reconcile.turn-ended", {
               sessionId: session.sessionId,
               wasBusy: session.busy,
@@ -308,8 +322,10 @@ export async function startController(options: ControllerOptions): Promise<{ por
     pid: process.pid,
     version: typeof __VERSION__ === "string" ? __VERSION__ : "0.0.0-dev",
     port: address.port,
-    intervalMs: options.intervalMs ?? 20 * 60_000,
-    maxIdleMs: options.maxIdleMs ?? 4 * 60 * 60_000,
+    intervalMs,
+    maxIdleMs,
+    maxProbes,
+    settingsFile: JSON.stringify(settings),
     web: web !== null,
     sessions: registry.snapshot().filter((session) => session.enabled).length,
   });

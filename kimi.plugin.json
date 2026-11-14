@@ -1,6 +1,6 @@
 {
   "name": "cache-keeper",
-  "version": "0.2.13",
+  "version": "0.2.15",
   "description": "通过 ACP 临时 fork 进行零主上下文污染的 prompt-cache 保活",
   "skills": "./skills/",
   "commands": "./commands/",

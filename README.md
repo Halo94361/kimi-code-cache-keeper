@@ -30,7 +30,7 @@ the request or the reply.
 ## Install
 
 ```text
-/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.2.10/cache-keeper-0.2.10.zip
+/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.2.15/cache-keeper-0.2.15.zip
 /plugins reload
 ```
 
@@ -70,6 +70,10 @@ token never reaches the model.
 - Oversized or unparsable requests may fall back to a process-wide session ID.
 - State lives in `<KIMI_CODE_HOME>/cache-keeper/state.json`; it contains no
   message content, tokens or API keys.
+- Timing can be overridden in `<KIMI_CODE_HOME>/cache-keeper/settings.json`:
+  `intervalMs` (default 20 min), `maxIdleMs` (default 4 h) and `maxProbes`
+  (keep-alive attempts per session before it auto-disables; re-enabling with
+  `on` resets the count).
 - Session short codes live in `<KIMI_CODE_HOME>/cache-keeper/sessions/`
   (one file per session, 30-day TTL); they contain only the code, session ID,
   cwd and timestamps.
@@ -117,7 +121,7 @@ MIT. Community project, not affiliated with Moonshot AI.
 ### 安装
 
 ```text
-/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.2.10/cache-keeper-0.2.10.zip
+/plugins install https://github.com/Halo94361/kimi-code-cache-keeper/releases/download/v0.2.15/cache-keeper-0.2.15.zip
 /plugins reload
 ```
 
@@ -152,6 +156,9 @@ MCP 提供 `on`、`off`、`status` 三个工具，均接收本会话的 9 位短
 - 超过请求体上限或无法解析时退回进程级会话 ID
 - 状态保存在 `<KIMI_CODE_HOME>/cache-keeper/state.json`，不含消息正文、
   token 或 API key
+- 定时参数可用 `<KIMI_CODE_HOME>/cache-keeper/settings.json` 覆盖：
+  `intervalMs`（默认 1200000 即 20 分钟）、`maxIdleMs`（默认 4 小时）、
+  `maxProbes`（每会话最多保活次数，用满后自动停用，再次 on 重新计数）
 - 会话短码保存在 `<KIMI_CODE_HOME>/cache-keeper/sessions/`（每会话一个文件，
   30 天 TTL），只含短码、session ID、cwd 和时间戳
 - 每次保活按步骤追加一行 JSONL 到

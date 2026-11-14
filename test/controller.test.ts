@@ -336,3 +336,63 @@ test("Web 重启换端口后 reconcile 丢弃失效端点并重新发现", async
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("保活失败后的暂停不会被 reconcile 静默解除", async () => {
+  const home = await mkdtemp(join(tmpdir(), "cache-keeper-pause-"));
+  const webServer = createServer((request, response) => {
+    response.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
+    if (request.url?.endsWith("/healthz")) {
+      response.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+    response.end(JSON.stringify({
+      code: 0,
+      msg: "success",
+      data: { busy: false, main_turn_active: false },
+    }));
+  });
+  await new Promise<void>((resolve) => webServer.listen(0, "127.0.0.1", resolve));
+  const address = webServer.address();
+  if (address === null || typeof address === "string") throw new Error("mock web 监听失败");
+  let attempts = 0;
+  const controller = await startController({
+    home,
+    intervalMs: 20,
+    reconcileMs: 10,
+    web: { baseUrl: `http://127.0.0.1:${address.port}`, token: "test" },
+    probe: async () => {
+      attempts += 1;
+      // 第一次失败；若暂停被错误解除，下一轮探测会挂在这里，状态露出 probing
+      if (attempts === 1) throw new Error("保活失败：mock");
+      return new Promise(() => {});
+    },
+  });
+  try {
+    const discovery = JSON.parse(await readFile(join(home, "cache-keeper", "controller.json"), "utf8"));
+    const call = async (method: string, path: string, body?: unknown) => {
+      const response = await fetch(`http://127.0.0.1:${controller.port}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${discovery.controlToken}`,
+          "Content-Type": "application/json",
+        },
+        body: body === undefined ? null : JSON.stringify(body),
+      });
+      return response.json();
+    };
+
+    await call("POST", "/v1/sessions/session-pause/on", { cwd: "/workspace" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const status = await call("GET", "/v1/status");
+    const session = status.sessions[0];
+    assert.equal(session?.state, "paused");
+    assert.equal(session?.error, "保活失败：mock");
+    assert.equal(session?.nextProbeAt, null);
+    assert.equal(attempts, 1);
+  } finally {
+    await controller.close();
+    webServer.closeAllConnections();
+    await new Promise<void>((resolve) => webServer.close(() => resolve()));
+    await rm(home, { recursive: true, force: true });
+  }
+});

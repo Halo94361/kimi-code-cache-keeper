@@ -279,3 +279,48 @@ test("超过最大空闲时间退休时记录原因", async () => {
   assert.equal(expired?.fields.maxIdleMs, 250);
   assert.equal(registry.snapshot()[0]?.state, "expired");
 });
+
+test("保活次数用满后自动停止，重新开启重新计数", async () => {
+  const logs: LogEntry[] = [];
+  let probes = 0;
+  const registry = new SessionRegistry({
+    intervalMs: 1,
+    maxIdleMs: 10_000,
+    maxProbes: 2,
+    log: (event: string, fields?: Record<string, unknown>) => {
+      logs.push({ event, fields: fields ?? {} });
+    },
+    probe: async () => {
+      probes += 1;
+      return { hitRatio: 0.9 };
+    },
+  });
+  registry.enable("a", "/workspace");
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  const session = registry.snapshot()[0];
+  assert.equal(probes, 2);
+  assert.equal(session?.enabled, false);
+  assert.equal(session?.state, "disabled");
+  assert.equal(session?.probeCount, 2);
+  assert.equal(session?.nextProbeAt, null);
+  const exhausted = logs.filter((entry) => entry.event === "probe.budget-exhausted");
+  assert.equal(exhausted.length, 1);
+  assert.equal(exhausted[0]?.fields.maxProbes, 2);
+
+  registry.enable("a", "/workspace");
+  assert.equal(registry.snapshot()[0]?.probeCount, 0);
+  registry.stop("a");
+});
+
+test("重启后沿用已用的保活次数", () => {
+  const registry = new SessionRegistry({
+    intervalMs: 100,
+    maxIdleMs: 1_000,
+    maxProbes: 3,
+    probe: async () => ({ hitRatio: 1 }),
+  });
+  registry.restore([stored({ probeCount: 2 })]);
+  assert.equal(registry.snapshot()[0]?.probeCount, 2);
+  registry.stop("a");
+});
