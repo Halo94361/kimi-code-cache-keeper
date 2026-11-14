@@ -1,0 +1,70 @@
+name: release
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: host
+    steps:
+      - name: checkout
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init -q .
+          git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          git -c http.extraheader="Authorization: token $TOKEN" fetch --depth 1 origin "refs/tags/${{ github.ref_name }}"
+          git checkout -q FETCH_HEAD
+
+      - name: build
+        run: |
+          set -eu
+          export PATH="$HOME/.local/share/mise/shims:$PATH"
+          npm ci
+          npm run check
+
+          rm -rf .release
+          mkdir -p .release/staging
+          cp kimi.plugin.json package.json README.md AGENTS.md LICENSE .release/staging/
+          cp -r commands skills dist .release/staging/
+          # manifest 声明的每个 ./ 目录都必须进包，否则安装后 Skills 会报诊断错误
+          for path in $(node -p 'const m=require("./kimi.plugin.json");[m.skills??[],m.commands??[]].flat().join("\n")'); do
+            test -e ".release/staging/${path#./}" || { echo "缺少 manifest 声明的目录：$path"; exit 1; }
+          done
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          (cd .release/staging && zip -qr "../cache-keeper-${VERSION}.zip" .)
+          (cd .release && sha256sum "cache-keeper-${VERSION}.zip" > sha256sums.txt)
+          ls -l .release
+
+      - name: publish
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          VERSION="${{ github.ref_name }}"
+          API="${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
+          AUTH="Authorization: token $TOKEN"
+          BODY=$(printf 'Automated release for %s.\n\nPlugin archive built by Gitea Actions on Node.js 22+.' "$VERSION")
+          payload=$(VERSION="$VERSION" BODY="$BODY" python3 -c 'import json,os;print(json.dumps({"tag_name":os.environ["VERSION"],"name":os.environ["VERSION"],"body":os.environ["BODY"],"draft":False,"prerelease":False}))')
+          create=$(curl -sS -o /tmp/rel.json -w '%{http_code}' -X POST \
+            -H "$AUTH" -H "Content-Type: application/json" \
+            -d "$payload" \
+            "$API/releases")
+          if [ "$create" = "201" ]; then
+            id=$(python3 -c 'import json;print(json.load(open("/tmp/rel.json"))["id"])')
+          else
+            id=$(curl -sS -H "$AUTH" "$API/releases/tags/$VERSION" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+            for asset in $(curl -sS -H "$AUTH" "$API/releases/$id/assets" | python3 -c 'import sys,json;[print(a["id"]) for a in json.load(sys.stdin)]'); do
+              curl -sS -o /dev/null -X DELETE -H "$AUTH" "$API/releases/$id/assets/$asset"
+            done
+          fi
+          for f in .release/cache-keeper-*.zip .release/sha256sums.txt; do
+            name=$(basename "$f")
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "$AUTH" \
+              -F "attachment=@$f" "$API/releases/$id/assets?name=$name")
+            echo "upload $name -> $code"
+            [ "$code" = "201" ] || exit 1
+          done
+          echo "release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/$VERSION"

@@ -68,6 +68,13 @@ dist/                 # 构建产物，不直接提交
 - 默认保活间隔 20 分钟，最大连续空闲保活时长 4 小时，可用 `<KIMI_CODE_HOME>/cache-keeper/settings.json` 的 intervalMs / maxIdleMs / maxProbes 覆盖；maxProbes 用满后自动停用该会话，再次 on 重新计数；连续 miss、网络错误或 401/403 必须暂停，不无限重试。控制器重启恢复时必须沿用已持久化的下次探测时间或最后一轮结束时间，已过点立即补探测，不得重置为空闲起点。
 - 不通过降低验收标准来绕过 ACP、缓存命中或会话锁问题；受阻时明确记录并报告。
 
+## 发布
+
+- 双远端：`origin` 是 GitHub，`gitea` 是本地 Gitea；两边都要推（`git push origin main` + `git push gitea main`），tag 同理。
+- GitHub 走 `.github/workflows/release.yml`（ubuntu runner + setup-node），产出 `cache-keeper-<version>.zip`。
+- Gitea 走 `.gitea/workflows/release.yml`（本机 host runner，Node 取自 mise shims），产物是同构 zip 加 `sha256sums.txt`；重新推同一个 tag 会覆盖同名资产。
+- 两边的 zip 内容必须一致：manifest 声明目录自检、打包清单的改动要在两个工作流里同步。
+
 ## 阶段 0 验收门槛
 
 在完整插件开发前，必须验证：
